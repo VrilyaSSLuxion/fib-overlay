@@ -1,0 +1,9 @@
+# Build-Ausgaben von PyInstaller
+build/
+dist/
+dist_neu/
+__pycache__/
+*.pyc
+
+# Laufzeit-Dateien
+crash_log.txt
