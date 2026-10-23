@@ -6,7 +6,8 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QInputDialog, QPushButton,
                              QTableWidgetItem, QHeaderView, QDoubleSpinBox,
                              QGridLayout, QColorDialog, QScrollArea, QSizePolicy,
                              QKeySequenceEdit, QFrame, QComboBox, QMessageBox,
-                             QMenu, QSpacerItem, QFileDialog, QLayout, QSlider, QAbstractSpinBox)
+                             QMenu, QSpacerItem, QFileDialog, QLayout, QSlider, QAbstractSpinBox,
+                             QLineEdit, QToolTip)
 from PyQt5.QtCore import Qt, QRect, QRectF, QPoint, QPointF, QSize, QAbstractNativeEventFilter, QTimer
 from PyQt5.QtGui import (QPainter, QPen, QColor, QFont, QKeySequence, QIcon, QPixmap,
                          QPainterPath, QTransform, QCursor, QPalette, QPolygonF)
@@ -64,9 +65,13 @@ MAGNET_ON = True
 MAGNET_MODE = "weak"    # "weak" = nur in der Nähe einer Kerze einrasten, "strong" = immer an der Kerze unterm Cursor
 
 MARGIN_TOP = 3
-GAP_1 = 3
-GAP_2 = 2
-MARGIN_BOTTOM = 13
+GAP_1 = 8
+GAP_2 = 13
+MARGIN_BOTTOM = 18
+
+MAGNET_DRAWINGS = True  # Magnet auch für Linien und Rechtecke, nicht nur für die Fib
+NUM_KEEP = True         # Objekt-Nummern behalten (Rechteck 3 bleibt Rechteck 3)
+APP_VERSION = "2"
 
 DEFAULTS = None  # Werkseinstellungen, wird in main() gefüllt
 
@@ -99,12 +104,14 @@ TOOL_ARTICLES = {"trend": "die Trendlinie", "ray": "den Strahl", "hray": "den ho
 TOOL_STYLES = {  # Standard für neue Zeichnungen (einzelne lassen sich per Doppelklick / Rechtsklick ändern)
     "trend": {"color": QColor("#ffffff"), "width": 2, "style": "Solid"},
     "ray":   {"color": QColor("#ffffff"), "width": 2, "style": "Solid"},
-    "hray":  {"color": QColor("#ffffff"), "width": 2, "style": "Solid"},
+    "hray":  {"color": QColor("#ffffff"), "width": 2, "style": "Solid",
+              "len_mode": "endless", "len_px": 300, "len_candles": 20},  # Länge: endlos / Pixel / Kerzen
     "hline": {"color": QColor("#ffffff"), "width": 2, "style": "Solid"},
-    "rect":  {"color": QColor("#ab47bc"), "width": 1, "style": "Solid",
-              "fill": True, "fill_color": QColor("#ab47bc"), "fill_opacity": 15, "midline": False},
+    "rect":  {"color": QColor("#ffeb3b"), "width": 1, "style": "Solid",
+              "fill": True, "fill_color": QColor("#ffeb3b"), "fill_opacity": 25,
+              "midline": True, "mid_color": QColor("#ffffff"), "mid_width": 1, "mid_style": "Dash"},
 }
-SETTINGS_VERSION = 2  # ab 2: Werkzeuge weiß / Dicke 2 - ältere gespeicherte Werkzeugfarben werden nicht übernommen
+SETTINGS_VERSION = 3  # ab 3: Rechteck gelb + Mittellinie - ältere gespeicherte Werkzeugwerte werden nicht übernommen
 
 # ===== VERLÄNGERUNG EINES LEVELS NACH RECHTS (z. B. 0,5) + ALARM =====
 EXT_STYLE = {
@@ -139,13 +146,19 @@ FIB_STYLE = {
     "font_size": 10,
     "label_box": False,          # dunkler Kasten hinter der Beschriftung
     "one_color": False, "one_color_value": QColor("#2962ff"),
-    "show_0": True, "color_0": QColor(230, 230, 230),   # Linie bei 0 und 1 (dort sitzen die Ankerpunkte)
-    "show_1": True, "color_1": QColor(230, 230, 230),
+    "level_width": 1, "level_style": "Solid",            # "Levels-Linie" wie bei TradingView: gilt für die Level-Liste
     "num_fmt": "de",             # "de" = 0,5 (81.751,0) / "en" = 0.5 (81751.0)
 }
-# zusätzliche Level wie in der Level-Liste bei TradingView (an/aus, Wert, Farbe) - anfangs alle aus
-FIB_EXTRA = [{"value": v, "color": QColor(c), "on": False} for v, c in
-             ((0.236, "#f23645"), (0.382, "#ff9800"), (0.786, "#00bcd4"), (1.618, "#2962ff"), (2.618, "#f23645"))]
+# Level-Liste 1:1 wie bei TradingView: 24 Plätze (Haken, Wert, Farbe), Reihenfolge = 2 Spalten zeilenweise
+_TV_LEVELS = [(-0.382, "#a19c3a", 0), (-0.272, "#3d7a42", 0), (0.0, "#ffffff", 1), (0.028, "#8b2e3a", 0),
+              (0.087, "#9e9e9e", 0), (0.146, "#9e9e9e", 0), (0.205, "#9e9e9e", 0), (0.264, "#9e9e9e", 0),
+              (0.323, "#9e9e9e", 0), (0.886, "#1e7f86", 0), (0.441, "#a19c3a", 0), (0.5, "#ffffff", 1),
+              (0.559, "#4caf50", 1), (0.618, "#ffeb3b", 1), (0.677, "#00bcd4", 1), (0.736, "#f23645", 1),
+              (0.795, "#1e7f86", 0), (0.854, "#6a2a86", 0), (0.913, "#8b2e3a", 0), (0.972, "#9e9e9e", 0),
+              (1.0, "#ffffff", 1), (1.031, "#9e9e9e", 0), (1.09, "#8b2e3a", 0), (1.149, "#8b2e3a", 0)]
+def default_fib_levels_json():
+    return [{"value": v, "color": QColor(c).name(QColor.HexArgb), "on": bool(on)} for v, c, on in _TV_LEVELS]
+FIB_LEVELS = [{"value": v, "color": QColor(c), "on": bool(on)} for v, c, on in _TV_LEVELS]
 PEN_STYLES = {"Solid": Qt.SolidLine, "Dash": Qt.DashLine, "Dot": Qt.DotLine}
 
 def _de(s): return s.replace(",", "§").replace(".", ",").replace("§", ".")
@@ -283,6 +296,53 @@ THEMES = {
         spawn=("#0f0f0f", VIO, GOLD), draw=("#0f0f0f", "#3a3a3a", "#e8e8e8"), clear=("#0f0f0f", "#5a1f1f", "#ef7676"),
         icon="#bdbdbd", highlight=VIO, rain=VIO, rain_head="#ffffff"),
 }
+
+def _vt(**kw):
+    """Grundlage für die Schwarz-Violett-Gold-Designs - es werden nur die Abweichungen angegeben."""
+    t = dict(bg="#000000", box="#000000", border=VIO, title="#ffffff", title_bg="#000000", title_border=GOLD,
+             text="#f0f0f0", muted="#a99fb3", btn="#0e0b12", btn_border="#3a2d45", btn_hover="#1c1524",
+             on=VIO, on_border=GOLD, on_text="#ffffff", table_bg="#060509", head="#120d17", head_text=GOLD,
+             grid="#241c2c", spawn=(VIO, GOLD, "#ffffff"), draw=("#0e0b12", "#ffffff", "#ffffff"),
+             clear=("#0e0b12", "#8e2a3a", "#ff9aa8"), icon=GOLD, highlight=VIO, rain=VIO, rain_head=GOLD)
+    t.update(kw)
+    return t
+
+THEMES.update({
+    "19 · Schwarz-Violett Classic": _vt(),
+    "20 · Goldrand": _vt(bg="#050505", box="#050505", border=GOLD, title_border=VIO, on=_grad("#e6c45a", "#a8841f"),
+                         on_border="#ffffff", on_text="#000000", spawn=(_grad("#9b45b5", "#5e1f72"), "#ffffff", "#ffffff"),
+                         draw=("#050505", GOLD, GOLD), head_text="#ffffff", highlight=GOLD, rain=GOLD, rain_head="#ffffff"),
+    "21 · Violett Samt": _vt(bg="#0c0612", box="#120a1a", border="#9b45b5", title=GOLD, title_border="#ffffff", title_bg="#1a0f24",
+                             btn="#1a0f24", btn_border="#4a2a5a", btn_hover="#2a1637", on=_grad("#9b45b5", "#5e1f72"),
+                             spawn=(_grad("#9b45b5", "#5e1f72"), GOLD, "#ffffff"), draw=("#1a0f24", GOLD, GOLD),
+                             table_bg="#0e0815", head="#22122e", grid="#33203f", highlight="#9b45b5"),
+    "22 · Gold Minimal": _vt(border="#3a3320", title=GOLD, btn="#0d0c09", btn_border="#3a3320", btn_hover="#1a1710",
+                             spawn=("#000000", GOLD, GOLD), draw=("#000000", VIO, "#ffffff"), table_bg="#050504",
+                             head="#100e08", grid="#221e12"),
+    "23 · Royal Violett": _vt(bg="#05030a", box="#05030a", border="#6d2a82", title_border="#c9a227", on_border="#ffffff",
+                              spawn=(_grad(VIO, "#3d1648"), "#c9a227", "#ffffff"), draw=("#0b0610", VIO, "#e6d0f0"),
+                              head="#1d0e26", head_text="#c9a227", grid="#2a1535"),
+    "24 · Neon Gold": _vt(border="#ffd166", title_border="#a24dc4", on="#ffd166", on_border="#ffffff", on_text="#000000",
+                          spawn=(_grad("#a24dc4", "#5e1f72"), "#ffd166", "#ffffff"), draw=("#000000", "#ffd166", "#ffd166"),
+                          head_text="#ffd166", highlight="#a24dc4", icon="#ffd166", rain="#ffd166", focus="#ffffff"),
+    "25 · Dunkelviolett Glas": _vt(bg="#0a0610", box="#0f0916", border="#5a2470", title="#f2e6ff", btn="#1a1022",
+                                   btn_border="#3d2350", btn_hover="#2a1637", on_border="#f2e6ff",
+                                   spawn=(VIO, "#f2e6ff", "#ffffff"), draw=("#1a1022", GOLD, GOLD),
+                                   table_bg="#0c0712", head="#1a1022", grid="#2e1c3a"),
+    "26 · Gold-Violett Duo": _vt(title=GOLD, title_border="#ffffff", spawn=(_grad("#e6c45a", "#a8841f"), VIO, "#000000"),
+                                 draw=(VIO, VIO, "#ffffff")),
+    "27 · Mitternacht": _vt(bg="#04040a", box="#04040a", border="#3b2a6b", on_border="#ffffff", spawn=(VIO, "#ffffff", "#ffffff"),
+                            draw=("#04040a", GOLD, GOLD), table_bg="#06060e", head="#0d0b1d", head_text="#ffffff",
+                            grid="#1c1838", icon="#d9c27a", highlight="#5b3fa0"),
+    "28 · Amethyst Gold": _vt(bg="#08050b", box="#08050b", border="#b88ad0", title=GOLD, title_border="#ffffff", on="#b88ad0",
+                              on_border="#ffffff", on_text="#14081c", spawn=(_grad("#e6c45a", "#a8841f"), "#ffffff", "#000000"),
+                              draw=("#120b18", "#b88ad0", "#e9d5f5"), head="#1d1226", grid="#33203f", highlight="#b88ad0",
+                              rain="#b88ad0"),
+})
+# Überschrift-Rahmen ("Fib Overlay", "Fibonacci-Stufen") in anderer Farbe als der Kasten drumherum
+for _name, _tb in (("Klassisch (Blau)", "#ffffff"), ("13 · Matrix Grün", "#00ff41"), ("2 · Royal Gold", VIO),
+                   ("10 · Gold Edition", VIO), ("16 · Gold-Weiß Premium", VIO)):
+    THEMES[_name].setdefault("title_border", _tb)
 THEME = "1 · Obsidian Violett"
 MATRIX_ON = False  # animierter Matrix-Regen im Dashboard-Hintergrund
 
@@ -296,6 +356,8 @@ def panel_css(t):
     # beim Matrix-Regen sind Kästen und Tabelle leicht durchsichtig, damit der Regen durchschimmert
     box = rgba(t["box"], 105) if MATRIX_ON else t["box"]
     table_bg = rgba(t["table_bg"], 165) if MATRIX_ON else t["table_bg"]
+    tb, focus = t.get("title_border", GOLD), t.get("focus", GOLD)
+    hover = mix(t["bg"], t["highlight"], 0.5)  # deutlich sichtbar, wenn die Maus über einem Knopf ist
     return f"""
         QDialog {{ background-color: {t['bg']}; }}
         QLabel {{ color: {t['text']}; }}
@@ -305,22 +367,27 @@ def panel_css(t):
         QGroupBox#tableBox {{ background-color: {box}; border: 1px solid {t['border']}; border-radius: 5px;
                               margin-top: 15px; font-weight: bold; color: {t['text']}; }}
         QGroupBox#tableBox::title {{ subcontrol-origin: margin; subcontrol-position: top center; padding: 2px 8px;
-                                     background-color: {t['bg']}; border: 1px solid {t['border']}; border-radius: 4px; color: {t['title']}; }}
-        QFrame#titleBox {{ background-color: {t['title_bg']}; border: 1px solid {t['border']}; border-radius: 4px; }}
+                                     background-color: {t['bg']}; border: 1px solid {tb}; border-radius: 4px; color: {t['title']}; }}
+        QFrame#titleBox {{ background-color: {t['title_bg']}; border: 1px solid {tb}; border-radius: 4px; }}
         QLabel#title {{ font-weight: bold; font-size: 14px; color: {t['title']}; border: none; background: transparent; }}
         QFrame#line {{ color: {t['border']}; }}
         QLabel#rules {{ color: {t['muted']}; font-size: 11px; border: none; background: transparent; }}
         QPushButton#toggle {{ background-color: {t['btn']}; color: {t['text']}; border: 1px solid {t['btn_border']};
                               border-radius: 4px; padding: 4px 8px; font-size: 11px; min-width: 50px; }}
+        QPushButton#toggle:hover {{ background-color: {hover}; border: 1px solid {focus}; }}
         QPushButton#toggle:checked {{ background-color: {t['on']}; color: {t['on_text']}; border: 1px solid {t['on_border']}; font-weight: bold; }}
-        QPushButton#gear, QPushButton#tool {{ background-color: {t['btn']}; border: 1px solid {t['btn_border']}; border-radius: 4px; padding: 0px; }}
+        QPushButton#toggle:checked:hover {{ border: 1px solid {focus}; }}
+        QPushButton#gear {{ background-color: {t['btn']}; border: 2px solid {focus}; border-radius: 5px; padding: 0px; }}
+        QPushButton#gear:hover {{ background-color: {hover}; border: 2px solid #ffffff; }}
+        QPushButton#tool {{ background-color: {t['btn']}; border: 1px solid {t['btn_border']}; border-radius: 4px; padding: 0px; }}
+        QPushButton#tool:hover {{ background-color: {hover}; border: 1px solid {focus}; }}
         QPushButton#tool:checked {{ background-color: {t['on']}; border: 1px solid {t['on_border']}; }}
-        QPushButton#toggle:hover, QPushButton#gear:hover, QPushButton#tool:hover {{ background-color: {t['btn_hover']}; }}
+        QPushButton#tool:checked:hover {{ border: 2px solid {focus}; }}
         QPushButton#spawn, QPushButton#draw, QPushButton#clear {{ padding: 8px; border-radius: 4px; font-size: 12px; }}
         QPushButton#spawn {{ background-color: {sp[0]}; border: 1px solid {sp[1]}; color: {sp[2]}; font-weight: bold; }}
         QPushButton#draw {{ background-color: {dr[0]}; border: 1px solid {dr[1]}; color: {dr[2]}; }}
         QPushButton#clear {{ background-color: {cl[0]}; border: 1px solid {cl[1]}; color: {cl[2]}; }}
-        QPushButton#spawn:hover, QPushButton#draw:hover, QPushButton#clear:hover {{ border: 1px solid {t['title']}; }}
+        QPushButton#spawn:hover, QPushButton#draw:hover, QPushButton#clear:hover {{ border: 1px solid {focus}; }}
         QTableWidget {{ background-color: {table_bg}; gridline-color: {t['grid']}; color: {t['text']}; border: 1px solid {t['border']}; }}
         QHeaderView::section {{ background-color: {t['head']}; color: {t['head_text']}; font-weight: bold; border: 1px solid {t['grid']}; padding: 2px; }}
         QTableWidget::item {{ border-bottom: 1px solid {t['grid']}; border-right: 1px solid {t['grid']}; }}
@@ -465,7 +532,9 @@ def settings_to_dict(ov):
         "matrix_style": style_to_json(MATRIX_STYLE),
         "theme": THEME,
         "matrix": MATRIX_ON,
-        "fib_extra": [{"value": l["value"], "color": l["color"].name(QColor.HexArgb), "on": l["on"]} for l in FIB_EXTRA],
+        "fib_levels": [{"value": l["value"], "color": l["color"].name(QColor.HexArgb), "on": l["on"]} for l in FIB_LEVELS],
+        "magnet_drawings": MAGNET_DRAWINGS,
+        "num_keep": NUM_KEEP,
         "line_length": ov.line_length,
         "show_price_input": ov.show_price_input,
         "locked": ov.is_locked,
@@ -477,6 +546,7 @@ def apply_settings(data, ov):
     """Übernimmt gespeicherte Werte. Was in der Datei fehlt, bleibt wie es ist."""
     global USE_GLOBAL_R, GLOBAL_TP1_R, GLOBAL_TP2_R, GLOBAL_TP3_R, AUTO_RESIZE_WINDOW, SHOW_RULES
     global PRICE_REF, PRICE_DECIMALS, MARGIN_TOP, GAP_1, GAP_2, MARGIN_BOTTOM, MAGNET_ON, MAGNET_MODE, THEME, MATRIX_ON
+    global MAGNET_DRAWINGS, NUM_KEEP
     USE_GLOBAL_R = bool(data.get("use_global_r", USE_GLOBAL_R))
     if "global_r" in data:
         GLOBAL_TP1_R, GLOBAL_TP2_R, GLOBAL_TP3_R = (float(v) for v in data["global_r"])
@@ -490,9 +560,11 @@ def apply_settings(data, ov):
     if data.get("magnet_mode") in ("weak", "strong"): MAGNET_MODE = data["magnet_mode"]
     if data.get("theme") in THEMES: THEME = data["theme"]
     MATRIX_ON = bool(data.get("matrix", MATRIX_ON))
-    if "fib_extra" in data:
-        FIB_EXTRA[:] = [{"value": float(d["value"]), "color": QColor(d["color"]), "on": bool(d["on"])} for d in data["fib_extra"]]
-    if data.get("version", 1) >= 2:  # ältere Dateien: neue Werkzeug-Standards (weiß, Dicke 2) behalten
+    MAGNET_DRAWINGS = bool(data.get("magnet_drawings", MAGNET_DRAWINGS))
+    NUM_KEEP = bool(data.get("num_keep", NUM_KEEP))
+    if isinstance(data.get("fib_levels"), list) and data["fib_levels"]:
+        FIB_LEVELS[:] = [{"value": float(d["value"]), "color": QColor(d["color"]), "on": bool(d["on"])} for d in data["fib_levels"]]
+    if data.get("version", 1) >= SETTINGS_VERSION:  # ältere Dateien: neue Werkzeug-Standards behalten
         for k, v in data.get("tools", {}).items():
             if k in TOOL_STYLES: style_from_json(TOOL_STYLES[k], v)
     style_from_json(FIB_STYLE, data.get("fib_style", {}))
@@ -521,6 +593,29 @@ def write_json(path, data):
     with open(tmp, "w", encoding="utf-8") as f: json.dump(data, f, indent=2, ensure_ascii=False)
     os.replace(tmp, path)  # erst komplett schreiben, dann tauschen -> nie eine halbe Datei
 
+# ===== VORLAGEN (je Werkzeug) UND SPEICHERPLÄTZE - eigene Dateien, bleiben beim Zurücksetzen erhalten =====
+TEMPLATES_FILE = os.path.join(APP_DIR, "vorlagen.json")
+SLOTS_FILE = os.path.join(APP_DIR, "speicherplaetze.json")
+
+def _load_or(path, default):
+    try: return read_json(path)
+    except Exception: return default
+
+TEMPLATES = _load_or(TEMPLATES_FILE, {})  # {werkzeug: {name: stil}}
+
+def save_templates():
+    try: write_json(TEMPLATES_FILE, TEMPLATES)
+    except OSError as ex: print("Vorlagen konnten nicht gespeichert werden:", ex)
+
+def load_slots():
+    slots = _load_or(SLOTS_FILE, [])
+    if not isinstance(slots, list): slots = []
+    return (slots + [{"name": "", "saved": "", "data": None} for _ in range(5)])[:5]
+
+def save_slots(slots):
+    try: write_json(SLOTS_FILE, slots)
+    except OSError as ex: print("Speicherplätze konnten nicht gespeichert werden:", ex)
+
 # ===== MAGNET =====
 def grab_screen(x, y, w, h):
     """Bildschirmausschnitt (globale Pixel) als BGRA-Bytes, Zeile für Zeile von oben."""
@@ -542,7 +637,7 @@ def find_wick(buf, w, h, cx, cy, strong):
         return max(r, g, b) - min(r, g, b)
     # 1) Startpunkt: der farbige Pixel am nächsten zum Cursor
     #    schwach = nur im Umkreis von 20 px, stark = irgendwo in der Spalte unter dem Cursor
-    rx, ry = (12, h) if strong else (20, 20)
+    rx, ry = (12, 200) if strong else (20, 20)
     seed = best = None
     for y in range(max(0, cy - ry), min(h, cy + ry + 1)):
         for x in range(max(0, cx - rx), min(w, cx + rx + 1)):
@@ -650,6 +745,15 @@ def tool_icon(kind, color="#dddddd"):
         p.drawLine(QPointF(14, 32), QPointF(62, 32)); dot(14, 32)
     elif kind == "rect":
         p.setBrush(QColor(c.red(), c.green(), c.blue(), 70)); p.drawRect(QRectF(8, 16, 48, 32))
+    elif kind == "palette":
+        p.setPen(QPen(c, 4)); p.setBrush(Qt.NoBrush); p.drawEllipse(QRectF(8, 10, 48, 44))
+        p.setPen(Qt.NoPen)
+        for x, y, col in ((22, 24, "#ff5252"), (36, 19, "#ffd54f"), (47, 31, "#69f0ae"), (22, 40, "#b388ff")):
+            p.setBrush(QColor(col)); p.drawEllipse(QPointF(x, y), 5, 5)
+    elif kind == "list":
+        for y in (16, 32, 48):
+            p.setPen(Qt.NoPen); p.setBrush(c); p.drawEllipse(QPointF(12, y), 4, 4)
+            p.setPen(QPen(c, 5, Qt.SolidLine, Qt.RoundCap)); p.drawLine(QPointF(24, y), QPointF(56, y))
     elif kind == "magnet":
         u = QPainterPath(); u.moveTo(18, 8); u.lineTo(18, 32)
         u.arcTo(QRectF(18, 18, 28, 28), 180, 180); u.lineTo(46, 8)
@@ -709,6 +813,10 @@ class HotkeyFilter(QAbstractNativeEventFilter):
                 return True, 0
         return False, 0
 
+RECT_PARTS = ("tl", "tr", "bl", "br", "t", "b", "l", "r")  # Griffpunkte am Rechteck: Ecken + Seitenmitten
+STYLE_SKIP = ("type", "p1", "p2", "num", "hidden", "locked", "price_ref", "ext_state", "pre_done")  # keine Stil-Werte
+
+
 class FibOverlay(QWidget):
     def __init__(self):
         super().__init__()
@@ -719,20 +827,23 @@ class FibOverlay(QWidget):
         vr = QApplication.primaryScreen().geometry()
         for s in QApplication.screens(): vr = vr.united(s.geometry())
         self.setGeometry(vr)
-        self.fibs = []          # mehrere Fibs möglich: {"p1", "p2", "price_ref"} - price_ref = [(fib, preis), (fib, preis)]
+        self.fibs = []          # mehrere Fibs möglich: {"type": "fib", "p1", "p2", "price_ref", "num", ...}
         self.placing_fib = None # Fib, die gerade gesetzt wird (nach dem 1. Klick)
         self.hover = None
         self.mode = "idle"
         self.tool = None        # was gerade gesetzt wird: "fib" oder ein Zeichenwerkzeug
         self.drawings = []      # einzelne Zeichnungen: {"type", "p1", "p2", "color", "width", "style", ...}
         self.pending = None     # Zeichnung, die gerade entsteht (nach dem 1. Klick)
-        self.dragging = None    # (art, index, teil): art "fib"/"draw", teil "p1"/"p2"/"move"
+        self.dragging = None    # (art, index, teil): art "fib"/"draw", teil "p1"/"p2"/"move" oder Rechteck-Griff
         self.drag_start = self.drag_orig = None
         self._hwnd = None
         self.main_panel = None  # Referenz auf das Dashboard
-        self._dialog = None
-        self.candle_px = 12     # gemessener Kerzenabstand in Pixeln (für "Verlängerung um N Kerzen")
+        self._dialog = self.list_dialog = None
+        self.counters = {}      # laufende Nummer je Objektart (Rechteck 1, Rechteck 2 …)
+        self.candle_px = 12     # gemessener Kerzenabstand in Pixeln (für Längen "in Kerzen")
         self.alert_text, self.alert_until = None, 0.0
+        self.snap_pt = None     # Magnet-Vorschau: hier würde der Punkt einrasten
+        self._last_mouse = None
 
         self.line_length = 800
         self.show_price_input = True
@@ -743,6 +854,9 @@ class FibOverlay(QWidget):
         # Kurs-Beobachtung für die Verlängerung (Farbe rot/grün, Alarm) - tut nichts, solange sie aus ist
         self.watch_timer = QTimer(self); self.watch_timer.setInterval(700)
         self.watch_timer.timeout.connect(self._watch_price); self.watch_timer.start()
+        # Magnet-Vorschau: kurz nach der letzten Mausbewegung einmal den Bildschirm prüfen
+        self.preview_timer = QTimer(self); self.preview_timer.setSingleShot(True); self.preview_timer.setInterval(45)
+        self.preview_timer.timeout.connect(self._preview_snap)
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -789,6 +903,11 @@ class FibOverlay(QWidget):
         self.update()
         if self.main_panel: self.main_panel.schedule_save()
 
+    def objects_changed(self):
+        # Objektliste aktuell halten (neue, gelöschte, umbenannte Objekte)
+        self.update()
+        if self.list_dialog and self.list_dialog.isVisible(): self.list_dialog.refresh()
+
     def set_hidden(self, on):
         self.is_hidden = on
         self._update_ct()
@@ -815,6 +934,39 @@ class FibOverlay(QWidget):
     def _hk_toggle_hide(self):
         self.set_hidden(not self.is_hidden)
 
+    # ----- Objekte: Nummern, Namen -----
+    def _assign_num(self, o):
+        kind = o.get("type", "fib")
+        self.counters[kind] = self.counters.get(kind, 0) + 1
+        o["num"] = self.counters[kind]
+
+    def name_of(self, o):
+        """Anzeigename wie "Rechteck 2" - Nummer bleibt fest oder wird neu durchgezählt (Einstellung)."""
+        kind = o.get("type", "fib")
+        label = "Fib" if kind == "fib" else TOOL_NAMES[kind]
+        if NUM_KEEP: n = o.get("num", 1)
+        else:
+            same = self.fibs if kind == "fib" else [d for d in self.drawings if d["type"] == kind]
+            n = next((i + 1 for i, x in enumerate(same) if x is o), 1)
+        return f"{label} {n}"
+
+    def _new_fib(self, p1, p2):
+        f = {"type": "fib", "p1": p1, "p2": p2, "price_ref": None}
+        self._assign_num(f)
+        return f
+
+    def _new_drawing(self, kind, pt):
+        d = {"type": kind, "p1": pt, "p2": pt}
+        for k, v in TOOL_STYLES[kind].items(): d[k] = QColor(v) if isinstance(v, QColor) else v
+        return d
+
+    def _add_drawing(self, d):
+        self._assign_num(d)
+        self.drawings.append(d)
+        if d["type"] == "hray" and d.get("len_mode") == "candles": self._estimate_candle_px(d["p1"])
+        self.objects_changed()
+
+    # ----- Zeichnen starten / beenden -----
     def _hk_draw(self):
         self.pending = self.placing_fib = self.hover = None
         self.tool = "fib"
@@ -828,21 +980,23 @@ class FibOverlay(QWidget):
     def spawn_default_fib(self):
         cx, cy = self.width() // 2, self.height() // 2
         off = 30 * (len(self.fibs) % 5)  # mehrere Sofort-Fibs nicht genau übereinander
-        f = {"p1": QPoint(cx + 200 + off, cy - 200 + off),  # 0 oben rechts, 1 unten links - wie bei TradingView
-             "p2": QPoint(cx - 200 + off, cy + 200 + off), "price_ref": None}
+        f = self._new_fib(QPoint(cx + 200 + off, cy - 200 + off),  # 0 oben rechts, 1 unten links - wie bei TradingView
+                          QPoint(cx - 200 + off, cy + 200 + off))
         self.fibs.append(f)
         self.tool = None
         self._activate("edit", Qt.OpenHandCursor)
+        self.objects_changed()
         QTimer.singleShot(200, lambda: self._finish_placement(f))
 
     def _hk_edit(self):
         if self.has_content(): self._activate("edit", Qt.OpenHandCursor)
 
     def _hk_clear(self):
-        self.fibs, self.drawings = [], []
-        self.placing_fib = self.hover = self.pending = self.tool = self.dragging = None
+        self.fibs, self.drawings, self.counters = [], [], {}
+        self.placing_fib = self.hover = self.pending = self.tool = self.dragging = self.snap_pt = None
         self.mode = "idle"
-        self._set_ct(True); self.setCursor(Qt.ArrowCursor); self.update()
+        self._set_ct(True); self.setCursor(Qt.ArrowCursor)
+        self.objects_changed()
         if self.main_panel: self.main_panel.placement_finished()
 
     def _hk_quit(self):
@@ -850,7 +1004,7 @@ class FibOverlay(QWidget):
         QApplication.quit()
 
     def _end_placing(self):
-        self.tool = self.pending = self.placing_fib = None
+        self.tool = self.pending = self.placing_fib = self.snap_pt = None
         self.mode = "edit" if self.has_content() else "idle"
         self._update_ct()
         self.setCursor(Qt.OpenHandCursor if self.mode == "edit" else Qt.ArrowCursor)
@@ -862,54 +1016,63 @@ class FibOverlay(QWidget):
             self.fibs = [f for f in self.fibs if f is not self.placing_fib]
         self.hover = None
         self._end_placing()
+        self.objects_changed()
 
     def delete_item(self, kind, idx):
         if kind == "fib": del self.fibs[idx]
         else: del self.drawings[idx]
         self._end_placing()
+        self.objects_changed()
 
     def duplicate(self, kind, idx):
-        """Kopie leicht versetzt daneben legen."""
+        """Kopie leicht versetzt daneben legen - bekommt eine eigene Nummer."""
         off = QPoint(30, 30)
+        src = self._obj(kind, idx)
+        o = {k: (QColor(v) if isinstance(v, QColor) else v) for k, v in src.items() if k not in ("hidden", "locked")}
+        o["p1"], o["p2"] = src["p1"] + off, src["p2"] + off
         if kind == "fib":
-            f = self.fibs[idx]
-            self.fibs.append({"p1": f["p1"] + off, "p2": f["p2"] + off, "price_ref": f["price_ref"]})
-        else:
-            d = dict(self.drawings[idx])
-            d["p1"], d["p2"] = d["p1"] + off, d["p2"] + off
-            for k in ("color", "fill_color"):
-                if k in d: d[k] = QColor(d[k])
-            self.drawings.append(d)
-        self.update()
+            self._assign_num(o); self.fibs.append(o); self.objects_changed()
+        else: self._add_drawing(o)
 
     def _obj(self, kind, idx):
         return self.fibs[idx] if kind == "fib" else self.drawings[idx]
 
-    def _new_drawing(self, kind, pt):
-        st = TOOL_STYLES[kind]
-        d = {"type": kind, "p1": pt, "p2": pt, "color": QColor(st["color"]), "width": st["width"], "style": st["style"]}
-        if kind == "rect":
-            d.update(fill=st["fill"], fill_color=QColor(st["fill_color"]), fill_opacity=st["fill_opacity"], midline=st["midline"])
-        return d
+    def all_objects(self):
+        """Alle fertigen Objekte als (art, index, objekt) - für Objektliste und Menüs."""
+        return ([("fib", i, f) for i, f in enumerate(self.fibs) if f["p2"] is not None]
+                + [("draw", i, d) for i, d in enumerate(self.drawings)])
 
+    # ----- Treffer-Tests -----
     def _hit(self, pos, pt, r=15):
         return pt is not None and (pos - pt).manhattanLength() <= r
 
+    def _handles(self, d):
+        """Griffpunkte einer Zeichnung {name: punkt}. Rechteck wie bei TradingView: Ecken + Seitenmitten."""
+        if d["type"] in ("hline", "hray"): return {"p1": d["p1"]}
+        if d["type"] != "rect": return {"p1": d["p1"], "p2": d["p2"]}
+        x0, x1 = sorted((d["p1"].x(), d["p2"].x())); y0, y1 = sorted((d["p1"].y(), d["p2"].y()))
+        cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
+        return {"tl": QPoint(x0, y0), "tr": QPoint(x1, y0), "bl": QPoint(x0, y1), "br": QPoint(x1, y1),
+                "t": QPoint(cx, y0), "b": QPoint(cx, y1), "l": QPoint(x0, cy), "r": QPoint(x1, cy)}
+
     def _hit_test(self, pos):
-        """Was liegt unter der Maus? (art, index, teil) oder None - art "fib"/"draw", teil "p1"/"p2"/"move"."""
+        """Was liegt unter der Maus? (art, index, teil) oder None. Verborgene Objekte zählen nicht."""
         for i in reversed(range(len(self.fibs))):
             f = self.fibs[i]
+            if f.get("hidden"): continue
             if self._hit(pos, f["p1"]): return ("fib", i, "p1")
             if self._hit(pos, f["p2"]): return ("fib", i, "p2")
         for i in reversed(range(len(self.drawings))):
             d = self.drawings[i]
-            if d["type"] == "hline": continue
-            if self._hit(pos, d["p1"], 10): return ("draw", i, "p1")
-            if d["type"] != "hray" and self._hit(pos, d["p2"], 10): return ("draw", i, "p2")
+            if d.get("hidden") or d["type"] == "hline": continue
+            for part, pt in self._handles(d).items():
+                if self._hit(pos, pt, 9): return ("draw", i, part)
         for i in reversed(range(len(self.drawings))):
-            if self._on_drawing(pos, self.drawings[i]): return ("draw", i, "move")
+            d = self.drawings[i]
+            if not d.get("hidden") and self._on_drawing(pos, d): return ("draw", i, "move")
         for i in reversed(range(len(self.fibs))):
-            if self._on_fib(pos, self.fibs[i]): return ("fib", i, "move")
+            f = self.fibs[i]
+            if not f.get("hidden") and self._on_fib(pos, f): return ("fib", i, "move")
         return None
 
     def _on_fib(self, pos, f):
@@ -935,21 +1098,20 @@ class FibOverlay(QWidget):
         return x0, x1, lambda f: ya + (yb - ya) * f
 
     def _fib_levels(self):
-        """Sichtbare Level, sortiert. Gleiche Werte (z. B. SL1 = E2) werden eine Linie mit beiden Namen."""
+        """Sichtbare Level, sortiert: erst die Level-Liste (wie TradingView), dazu die Linien der Setups.
+        Gleiche Werte werden eine Linie mit allen Namen, z. B. 0,559 · SL1 · E2."""
         groups = {}
         def add(frac, color, thick, style, name):
             g = groups.setdefault(round(frac, 6), {"frac": frac, "color": color, "thick": thick, "style": style, "names": []})
             if name: g["names"].append(name)
-        if FIB_STYLE["show_0"]: add(0.0, FIB_STYLE["color_0"], 1, "Solid", None)
-        if FIB_STYLE["show_1"]: add(1.0, FIB_STYLE["color_1"], 1, "Solid", None)
+        for lv in FIB_LEVELS:
+            if lv["on"]: add(lv["value"], lv["color"], FIB_STYLE["level_width"], FIB_STYLE["level_style"], None)
         for s in SETUPS:
             if not s["active"]: continue
             n = s["n"]
             for k, frac, label in (("e", s["entry"], f"E{n}"), ("sl", s["sl"], f"SL{n}"), ("be", s["be"], f"BE{n}"),
                                    ("tp1", s["tp1"], f"TP1_{n}"), ("tp2", s["tp2"], f"TP2_{n}"), ("tp3", s["tp3"], f"TP3_{n}")):
                 if s[f"show_{k}"]: add(frac, s[f"color_{k}"], s[f"thick_{k}"], s[f"style_{k}"], label)
-        for lv in FIB_EXTRA:
-            if lv["on"]: add(lv["value"], lv["color"], 1, "Solid", None)
         return sorted(groups.values(), key=lambda g: g["frac"])
 
     def _level_text(self, lv, f):
@@ -971,7 +1133,11 @@ class FibOverlay(QWidget):
         if d["type"] == "hline":
             x0, x1 = self._screen_span(d["p1"]); return QPointF(x0, a.y()), QPointF(x1, a.y())
         if d["type"] == "hray":
-            return a, QPointF(self._screen_span(d["p1"])[1], a.y())
+            mode = d.get("len_mode", "endless")
+            if mode == "px": end = a.x() + d.get("len_px", 300)
+            elif mode == "candles": end = a.x() + d.get("len_candles", 20) * self.candle_px
+            else: end = self._screen_span(d["p1"])[1]
+            return a, QPointF(end, a.y())
         if d["type"] == "ray":
             v = b - a
             length = math.hypot(v.x(), v.y())
@@ -985,16 +1151,19 @@ class FibOverlay(QWidget):
         a, b = self._line_ends(d)
         return dist_to_segment(p, a, b) <= 6
 
-    def snap(self, pos):
+    # ----- Magnet -----
+    def snap(self, pos, drawing=False):
         """Magnet: Punkt an Hoch/Tief der Kerze darunter einrasten lassen (Overlay-Koordinaten rein und raus)."""
-        if not MAGNET_ON or self._hwnd is None: return pos
+        if not MAGNET_ON or self._hwnd is None or (drawing and not MAGNET_DRAWINGS): return pos
         g = self.mapToGlobal(pos)
         scr = QApplication.screenAt(g)
         if not scr: return pos
         sg = scr.geometry()
         strong = MAGNET_MODE == "strong"
+        # auch "stark" sucht nur in der Nähe - sonst springt der Punkt z. B. in die Kopfzeile der Webseite
+        reach = 250 if strong else 150
         x0, x1 = max(sg.left(), g.x() - 60), min(sg.right() + 1, g.x() + 61)
-        y0, y1 = (sg.top(), sg.bottom() + 1) if strong else (max(sg.top(), g.y() - 150), min(sg.bottom() + 1, g.y() + 151))
+        y0, y1 = max(sg.top(), g.y() - reach), min(sg.bottom() + 1, g.y() + reach + 1)
         buf = self._grab_without_overlay(x0, y0, x1 - x0, y1 - y0)
         if buf is None: return pos
         hit = find_wick(buf, x1 - x0, y1 - y0, g.x() - x0, g.y() - y0, strong)
@@ -1006,6 +1175,38 @@ class FibOverlay(QWidget):
         try: return grab_screen(x, y, w, h)
         finally: user32.SetWindowDisplayAffinity(self._hwnd, WDA_NONE)
 
+    def _estimate_candle_px(self, pt):
+        # Kerzenabstand rund um den Punkt messen (für Längen "in Kerzen")
+        if self._hwnd is None: return
+        g = self.mapToGlobal(pt); scr = QApplication.screenAt(g)
+        if not scr: return
+        sg = scr.geometry()
+        x0, x1 = max(sg.left(), g.x() - 300), min(sg.right() + 1, g.x() + 300)
+        y0, y1 = max(sg.top(), g.y() - 200), min(sg.bottom() + 1, g.y() + 200)
+        buf = self._grab_without_overlay(x0, y0, x1 - x0, y1 - y0)
+        res = analyze_candles(buf, x1 - x0, y1 - y0) if buf else None
+        if res and res[0] and 3 <= res[0] <= 80: self.candle_px = res[0]; self.update()
+
+    def _magnet_target(self, pos, part, drawing):
+        # wohin der Magnet einen gezogenen Griff setzt: Seiten oben/unten nur in der Höhe, links/rechts gar nicht
+        if part in ("l", "r", "move"): return pos
+        sp = self.snap(pos, drawing)
+        return QPoint(pos.x(), sp.y()) if part in ("t", "b") else sp
+
+    def _preview_snap(self):
+        """Magnet-Vorschau wie bei TradingView: schon vor dem Klick bzw. beim Ziehen zeigen, wo es einrastet."""
+        pos = self._last_mouse
+        if pos is None or not MAGNET_ON: return
+        if self.mode == "placing":
+            sp = self.snap(pos, drawing=self.tool != "fib")
+            self.snap_pt = sp if sp != pos else None
+            if self.pending: self.pending["p2"] = sp
+            elif self.placing_fib is not None: self.hover = sp
+            self.update()
+        elif self.mode == "edit" and self.dragging and self.dragging[2] != "move":
+            self._apply_drag(self._magnet_target(pos, self.dragging[2], self.dragging[0] == "draw"))
+            self.update()
+
     # ----- Verlängerung + Alarm -----
     def _watch_price(self):
         """Für die Verlängerung: letzte Kerze am Bildschirm suchen -> Kurs über oder unter dem Level? (Test-Funktion)"""
@@ -1013,7 +1214,7 @@ class FibOverlay(QWidget):
         if self.is_hidden or self._hwnd is None or self.dragging or self.mode == "placing": return
         level, changed = EXT_STYLE["level"], False
         for f in self.fibs:
-            if f["p2"] is None: continue
+            if f["p2"] is None or f.get("hidden"): continue
             x0, x1, y_of = self._fib_geom(f["p1"], f["p2"])
             if y_of(1) == y_of(0): continue
             ya, yb = sorted((y_of(0), y_of(1)))
@@ -1035,7 +1236,7 @@ class FibOverlay(QWidget):
             state = "up" if oy < y_of(level) else "down"            # kleiner y = höherer Kurs
             old = f.get("ext_state")
             if old and state != old and EXT_STYLE["alarm"]:
-                self._alarm(f"Level {fmt_level(level)} gekreuzt – Kurs jetzt {'darüber' if state == 'up' else 'darunter'}")
+                self._alarm(f"{self.name_of(f)}: Level {fmt_level(level)} gekreuzt – Kurs jetzt {'darüber' if state == 'up' else 'darunter'}")
             pre = EXT_STYLE["pre_alert"]
             if pre > 0:
                 dist = abs((oy - y_of(0)) / (y_of(1) - y_of(0)) - level)
@@ -1064,60 +1265,83 @@ class FibOverlay(QWidget):
 
         if e.button() != Qt.LeftButton or self.is_locked: return
         if self.mode == "placing":
-            pt = self.snap(e.pos())
+            self.preview_timer.stop()
+            pt = self.snap(e.pos(), drawing=self.tool != "fib")
             if self.tool == "fib":
                 f = self.placing_fib
                 if f is None:
-                    self.placing_fib = {"p1": pt, "p2": None, "price_ref": None}
+                    self.placing_fib = self._new_fib(pt, None)
                     self.fibs.append(self.placing_fib); self.update()
                 else:
-                    f["p2"] = pt; self.placing_fib = self.tool = None; self.mode = "edit"
+                    f["p2"] = pt; self.placing_fib = self.tool = self.snap_pt = None; self.mode = "edit"
                     self.setCursor(Qt.OpenHandCursor)
+                    self.objects_changed()
                     QTimer.singleShot(100, lambda: self._finish_placement(f))
-                    self.update()
             elif self.pending is None:
                 self.pending = self._new_drawing(self.tool, pt)
                 if self.tool in ("hline", "hray"):
-                    self.drawings.append(self.pending); self._end_placing()
+                    d = self.pending; self.pending = None
+                    self._add_drawing(d); self._end_placing()
                 else: self.update()
             else:
-                self.pending["p2"] = pt
-                self.drawings.append(self.pending); self._end_placing()
+                d = self.pending; d["p2"] = pt; self.pending = None
+                self._add_drawing(d); self._end_placing()
         elif self.mode == "edit":
             hit = self._hit_test(e.pos())
             if not hit: return
-            self.dragging, self.drag_start = hit, e.pos()
             o = self._obj(hit[0], hit[1])
+            if o.get("locked"): return  # fixiertes Objekt bleibt, wo es ist
+            if o.get("type") == "rect":
+                # Ecken ordnen (p1 = oben links, p2 = unten rechts), damit jeder Griff weiß, welche Seite er bewegt
+                x0, x1 = sorted((o["p1"].x(), o["p2"].x())); y0, y1 = sorted((o["p1"].y(), o["p2"].y()))
+                o["p1"], o["p2"] = QPoint(x0, y0), QPoint(x1, y1)
+            self.dragging, self.drag_start = hit, e.pos()
             self.drag_orig = (QPoint(o["p1"]), QPoint(o["p2"]))
             self.setCursor(Qt.ClosedHandCursor)
 
+    def _apply_drag(self, pos):
+        kind, idx, part = self.dragging
+        o = self._obj(kind, idx)
+        if part == "move":
+            delta = pos - self.drag_start
+            o["p1"], o["p2"] = self.drag_orig[0] + delta, self.drag_orig[1] + delta
+        elif part in RECT_PARTS:
+            p1, p2 = QPoint(o["p1"]), QPoint(o["p2"])
+            if part in ("tl", "l", "bl"): p1.setX(pos.x())
+            if part in ("tr", "r", "br"): p2.setX(pos.x())
+            if part in ("tl", "t", "tr"): p1.setY(pos.y())
+            if part in ("bl", "b", "br"): p2.setY(pos.y())
+            o["p1"], o["p2"] = p1, p2
+        else:
+            o[part] = pos
+            if o.get("type") in ("hline", "hray"): o["p2"] = o["p1"]
+
     def mouseMoveEvent(self, e):
+        self._last_mouse = e.pos()
         if self.is_locked: return
         if self.mode == "placing":
             if self.placing_fib is not None: self.hover = e.pos(); self.update()
             elif self.pending: self.pending["p2"] = e.pos(); self.update()
+            if MAGNET_ON: self.preview_timer.start()
         elif self.mode == "edit" and self.dragging:
-            kind, idx, part = self.dragging
-            o = self._obj(kind, idx)
-            if part == "move":
-                delta = e.pos() - self.drag_start
-                o["p1"], o["p2"] = self.drag_orig[0] + delta, self.drag_orig[1] + delta
-            else:
-                o[part] = e.pos()
-                if o.get("type") in ("hline", "hray"): o["p2"] = o["p1"]
+            self._apply_drag(e.pos())
+            if MAGNET_ON and self.dragging[2] != "move": self.preview_timer.start()
             self.update()
 
     def mouseReleaseEvent(self, e):
         if not self.dragging: return
-        (kind, idx, part), self.dragging = self.dragging, None
+        self.preview_timer.stop()
+        kind, idx, part = self.dragging
         o = self._obj(kind, idx)
-        # Magnet erst beim Loslassen - während des Ziehens wäre der Bildschirm-Scan zu langsam
-        if part in ("p1", "p2"):
-            o[part] = self.snap(o[part])
-            if o.get("type") in ("hline", "hray"): o["p2"] = o["p1"]
+        # Magnet beim Loslassen: Endpunkt/Ecke einrasten, verschobene horizontale Linien in der Höhe
+        if part != "move": self._apply_drag(self._magnet_target(e.pos(), part, kind == "draw"))
         elif o.get("type") in ("hline", "hray"):
-            y = self.snap(QPoint(e.pos().x(), o["p1"].y())).y()
+            y = self.snap(QPoint(e.pos().x(), o["p1"].y()), drawing=True).y()
             o["p1"] = o["p2"] = QPoint(o["p1"].x(), y)
+        if o.get("type") == "rect":
+            x0, x1 = sorted((o["p1"].x(), o["p2"].x())); y0, y1 = sorted((o["p1"].y(), o["p2"].y()))
+            o["p1"], o["p2"] = QPoint(x0, y0), QPoint(x1, y1)
+        self.dragging = None
         self.setCursor(Qt.OpenHandCursor)
         self.update()
 
@@ -1136,14 +1360,23 @@ class FibOverlay(QWidget):
         self._dialog = DrawingDialog(self, self.drawings[idx])
         self._dialog.adjustSize(); self._dialog.move(gpos + QPoint(16, 16)); self._dialog.show()
 
+    def open_object_list(self, gpos=None):
+        if not self.list_dialog: self.list_dialog = ObjectListDialog(self)
+        self.list_dialog.refresh()
+        if gpos is not None: self.list_dialog.move(gpos + QPoint(16, 16))
+        bring_window_to_front(self.list_dialog)
+
     def _context_menu(self, pos, gpos):
         hit = self._hit_test(pos)
         if not hit:
-            if not self.fibs: return
-            hit = ("fib", len(self.fibs) - 1, "move")  # z. B. Rechtsklick auf eine Beschriftung neben der Fib
+            visible = [i for i, f in enumerate(self.fibs) if not f.get("hidden") and f["p2"] is not None]
+            if not visible: return
+            hit = ("fib", visible[-1], "move")  # z. B. Rechtsklick auf eine Beschriftung neben der Fib
         kind, idx = hit[0], hit[1]
-        d = self.drawings[idx] if kind == "draw" else None
+        o = self._obj(kind, idx)
+        d = o if kind == "draw" else None
         menu = QMenu(self)
+        menu.addSection(self.name_of(o))
         act_props = act_color = act_prices = act_settings = None
         width_acts = {}
         if d:
@@ -1157,8 +1390,11 @@ class FibOverlay(QWidget):
             act_prices = menu.addAction("Preise eingeben …")
             act_settings = menu.addAction("Einstellungen …")
         act_dup = menu.addAction("Duplizieren")
+        act_lock = menu.addAction("Lösen" if o.get("locked") else "Fixieren")
+        act_hide_obj = menu.addAction("Verbergen")
         menu.addSeparator()
-        act_hide = menu.addAction("Verstecken")
+        act_list = menu.addAction("Objektliste …")
+        act_hide = menu.addAction("Alles verstecken")
         act_show_dash = menu.addAction("Dashboard anzeigen")
         menu.addSeparator()
         act_del = menu.addAction("Löschen")
@@ -1170,12 +1406,17 @@ class FibOverlay(QWidget):
         elif action == act_show_dash and self.main_panel:
             self.main_panel.bring_to_front()
         elif action == act_del:
-            what = TOOL_ARTICLES[d["type"]] if d else "die Fibonacci"
-            if self._confirm(f"Möchtest du {what} wirklich löschen?", gpos): self.delete_item(kind, idx)
+            if self._confirm(f"Möchtest du „{self.name_of(o)}“ wirklich löschen?", gpos): self.delete_item(kind, idx)
         elif action == act_dup:
             self.duplicate(kind, idx)
+        elif action == act_lock:
+            o["locked"] = not o.get("locked"); self.objects_changed()
+        elif action == act_hide_obj:
+            o["hidden"] = True; self.objects_changed()
+        elif action == act_list:
+            self.open_object_list(gpos)
         elif action == act_prices:
-            self._prompt_prices(self.fibs[idx])
+            self._prompt_prices(o)
         elif action == act_settings and self.main_panel:
             self.main_panel.open_settings(fib=True)
         elif action == act_props:
@@ -1210,7 +1451,7 @@ class FibOverlay(QWidget):
         for frac, text in refs:
             dlg = QInputDialog(self)
             dlg.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Dialog)
-            dlg.setWindowTitle(f"Preis {len(prices) + 1} von 2")
+            dlg.setWindowTitle(f"{self.name_of(f)} – Preis {len(prices) + 1} von 2")
             dlg.setLabelText(text + ("\n(Abbrechen = ohne Preise)" if not prices else ""))
             dlg.setInputMode(QInputDialog.DoubleInput)  # ohne das zeigt Qt ein Textfeld und liefert immer 0
             dlg.setDoubleRange(-1e12, 1e12); dlg.setDoubleDecimals(PRICE_DECIMALS)
@@ -1224,7 +1465,7 @@ class FibOverlay(QWidget):
 
     def price_at(self, f, frac):
         """Preis an einem Fib-Level - linear aus den zwei eingegebenen Preisen."""
-        if not f or not f["price_ref"]: return None
+        if not f or not f.get("price_ref"): return None
         (fa, pa), (fb, pb) = f["price_ref"]
         return pa + (frac - fa) * (pb - pa) / (fb - fa)
 
@@ -1241,12 +1482,21 @@ class FibOverlay(QWidget):
             else: hint = f"{TOOL_NAMES.get(self.tool, '')}: 1. Klick = Start   2. Klick = Ende"
             self._banner(p, hint + "   Esc / Rechtsklick = Abbrechen", QColor(255, 255, 255, 240), None)
         for f in self.fibs:
+            if f.get("hidden"): continue
             # Fib zuerst, Zeichnungen darüber. Beim Setzen gibt es schon eine Vorschau bis zur Maus.
             end = f["p2"] or (self.hover if f is self.placing_fib else None)
             if end: self._levels(p, f, end)
-            self._anchor(p, f["p1"])
-            if f["p2"]: self._anchor(p, f["p2"])
+            self._anchor(p, f["p1"], f)
+            if f["p2"]: self._anchor(p, f["p2"], f)
         self._draw_drawings(p)
+        if self.mode == "placing" and self.snap_pt is not None:
+            # Magnet-Vorschau: kleiner Ring mit Kreuz, wo der Klick einrasten würde
+            p.setRenderHint(QPainter.Antialiasing, True)
+            p.setPen(QPen(QColor("#2962ff"), 2)); p.setBrush(QColor(41, 98, 255, 60))
+            p.drawEllipse(QPointF(self.snap_pt), 7, 7)
+            p.drawLine(self.snap_pt + QPoint(-11, 0), self.snap_pt + QPoint(11, 0))
+            p.drawLine(self.snap_pt + QPoint(0, -11), self.snap_pt + QPoint(0, 11))
+            p.setRenderHint(QPainter.Antialiasing, False); p.setBrush(Qt.NoBrush)
         if self.alert_text and time.time() < self.alert_until:
             self._banner(p, "⚠  " + self.alert_text, QColor("#ffffff"), QColor(200, 30, 50, 230))
 
@@ -1263,9 +1513,11 @@ class FibOverlay(QWidget):
         p.drawText(rect, Qt.AlignHCenter | Qt.AlignTop, text)
 
     def _draw_drawings(self, p):
-        grab = self.mode == "edit" and not self.is_locked
+        editing = self.mode == "edit" and not self.is_locked
         p.setRenderHint(QPainter.Antialiasing, True)
         for d in self.drawings + ([self.pending] if self.pending else []):
+            if d.get("hidden"): continue
+            grab = editing and not d.get("locked")
             a, b = self._line_ends(d)
             rect = QRectF(QPointF(d["p1"]), QPointF(d["p2"])).normalized()
             if grab:
@@ -1279,20 +1531,20 @@ class FibOverlay(QWidget):
                 fill = QColor(d["fill_color"]); fill.setAlpha(int(d["fill_opacity"] * 2.55))
                 p.setBrush(fill if d["fill"] else Qt.NoBrush); p.drawRect(rect)
                 if d["midline"]:
-                    p.setPen(QPen(c, 1, Qt.DashLine))
+                    p.setPen(QPen(d["mid_color"], d["mid_width"], PEN_STYLES.get(d["mid_style"], Qt.DashLine)))
                     p.drawLine(QPointF(rect.left(), rect.center().y()), QPointF(rect.right(), rect.center().y()))
             else:
                 p.setBrush(Qt.NoBrush); p.drawLine(a, b)
             if d["type"] in ("hline", "hray"): self._hline_label(p, d, b)
             if grab and d is not self.pending:
-                for h in ([d["p1"]] if d["type"] in ("hline", "hray") else [d["p1"], d["p2"]]):
-                    p.setPen(QPen(c, 2)); p.setBrush(QColor(20, 20, 20, 220)); p.drawEllipse(QPointF(h), 4, 4)
+                for h in self._handles(d).values():
+                    p.setPen(QPen(QColor("#2962ff"), 2)); p.setBrush(QColor(19, 23, 34)); p.drawEllipse(QPointF(h), 4.5, 4.5)
         p.setRenderHint(QPainter.Antialiasing, False)
         p.setBrush(Qt.NoBrush)
 
     def _hline_label(self, p, d, right):
         # Preis der Linie - geht nur, wenn an einer Fib Preise eingegeben wurden
-        f = next((f for f in reversed(self.fibs) if f["p2"] is not None and f["price_ref"]), None)
+        f = next((f for f in reversed(self.fibs) if f["p2"] is not None and f.get("price_ref")), None)
         if not f: return
         _, _, y_of = self._fib_geom(f["p1"], f["p2"])
         if y_of(1) == y_of(0): return
@@ -1305,9 +1557,9 @@ class FibOverlay(QWidget):
         p.fillRect(rect, QColor(0, 0, 0, 200)); p.setPen(d["color"])
         p.drawText(rect, Qt.AlignCenter, txt)
 
-    def _anchor(self, p, pt):
+    def _anchor(self, p, pt, f):
         # Ankerpunkte wie bei TradingView: kleine blaue Kreise, nur solange man bearbeiten kann
-        if self.is_locked or self.mode not in ("edit", "placing"): return
+        if self.is_locked or f.get("locked") or self.mode not in ("edit", "placing"): return
         if self.mode == "edit":
             # unsichtbare Greiffläche, damit man den Punkt leicht trifft
             p.setPen(Qt.NoPen); p.setBrush(QColor(0, 0, 0, 1)); p.drawEllipse(pt, 15, 15)
@@ -1341,7 +1593,7 @@ class FibOverlay(QWidget):
             p.drawLine(x1, ly, int(x1 + EXT_STYLE["candles"] * self.candle_px), ly)
         fnt = QFont(); fnt.setPixelSize(int(FIB_STYLE["font_size"] * 1.25)); p.setFont(fnt)
         fm = p.fontMetrics()
-        grab = self.mode == "edit" and not self.is_locked
+        grab = self.mode == "edit" and not self.is_locked and not f.get("locked")
         for lv in levels:
             y = int(round(y_of(lv["frac"])))
             if not (0 <= y <= self.height()): continue
@@ -1364,45 +1616,85 @@ class FibOverlay(QWidget):
             p.setPen(c); p.drawText(rect, Qt.AlignCenter, txt)
 
 
+def themed_dialog_css():
+    t = THEMES[THEME]
+    return (f"QWidget {{ background-color: {t['bg']}; color: {t['text']}; }}" + indicator_css(t) + field_css(t)
+            + f"QPushButton {{ background-color: {t['btn']}; color: {t['text']}; border: 1px solid {t['btn_border']};"
+              f" border-radius: 4px; padding: 4px 10px; }} QPushButton:hover {{ border: 1px solid {t.get('focus', GOLD)}; }}")
+
+
 class DrawingDialog(QDialog):
-    """Eigenschaften einer einzelnen Zeichnung (Doppelklick): Farbe, Dicke, Stil - beim Rechteck auch Füllung und Mittellinie."""
+    """Eigenschaften einer einzelnen Zeichnung (Doppelklick) - wie bei TradingView, mit Vorlagen."""
+    LINE_STYLES = (("Durchgezogen", "Solid"), ("Gestrichelt", "Dash"), ("Gepunktet", "Dot"))
+
     def __init__(self, ov, d):
         super().__init__(ov)
         self.ov, self.d = ov, d
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Dialog)
-        self.setWindowTitle(f"{TOOL_NAMES[d['type']]} – Eigenschaften")
-        t = THEMES[THEME]
-        self.setStyleSheet(f"QWidget {{ background-color: {t['bg']}; color: {t['text']}; }}" + indicator_css(t) + field_css(t))
+        self.setWindowTitle(f"{ov.name_of(d)} – Eigenschaften")
+        self.setStyleSheet(themed_dialog_css())
         g = QGridLayout(self)
-        g.addWidget(QLabel("Linie"), 0, 0)
-        g.addWidget(self._color_btn("color"), 0, 1)
-        sp = QSpinBox(); sp.setRange(1, 6); sp.setValue(d["width"]); sp.setMinimumWidth(64)
-        sp.valueChanged.connect(lambda v: self._set("width", v))
-        g.addWidget(sp, 0, 2)
-        cb = QComboBox()
-        for text, val in (("Durchgezogen", "Solid"), ("Gestrichelt", "Dash"), ("Gepunktet", "Dot")): cb.addItem(text, val)
-        cb.setCurrentIndex(max(0, cb.findData(d.get("style", "Solid"))))
-        cb.currentIndexChanged.connect(lambda i: self._set("style", cb.itemData(i)))
-        g.addWidget(cb, 0, 3)
-        row = 1
-        if d["type"] == "rect":
-            chk = QCheckBox("Füllung"); chk.setChecked(d["fill"]); chk.toggled.connect(lambda v: self._set("fill", v))
-            g.addWidget(chk, row, 0)
+        rect = d["type"] == "rect"
+        row = 0
+        g.addWidget(QLabel("Rahmen" if rect else "Linie"), row, 0)
+        g.addWidget(self._color_btn("color"), row, 1); g.addWidget(self._spin("width", 1, 6), row, 2)
+        g.addWidget(self._style_combo("style"), row, 3)
+        row += 1
+        if rect:
+            g.addWidget(self._check("fill", "Füllung"), row, 0)
             g.addWidget(self._color_btn("fill_color"), row, 1)
             sl = QSlider(Qt.Horizontal); sl.setRange(0, 100); sl.setValue(d["fill_opacity"])
             lbl = QLabel(f"{d['fill_opacity']} %")
             sl.valueChanged.connect(lambda v: (lbl.setText(f"{v} %"), self._set("fill_opacity", v)))
             g.addWidget(sl, row, 2); g.addWidget(lbl, row, 3)
-            mid = QCheckBox("Mittellinie"); mid.setChecked(d["midline"]); mid.toggled.connect(lambda v: self._set("midline", v))
-            g.addWidget(mid, row + 1, 0, 1, 2)
-            row += 2
+            row += 1
+            g.addWidget(self._check("midline", "Mittellinie"), row, 0)
+            g.addWidget(self._color_btn("mid_color"), row, 1); g.addWidget(self._spin("mid_width", 1, 6), row, 2)
+            g.addWidget(self._style_combo("mid_style"), row, 3)
+            row += 1
+        if d["type"] == "hray":
+            g.addWidget(QLabel("Länge"), row, 0)
+            cb = QComboBox()
+            for text, val in (("Endlos bis zum Rand", "endless"), ("Pixel", "px"), ("Kerzen (am Bildschirm gemessen)", "candles")):
+                cb.addItem(text, val)
+            cb.setCurrentIndex(max(0, cb.findData(d["len_mode"])))
+            self.sp_px, self.sp_candles = self._spin("len_px", 10, 4000), self._spin("len_candles", 1, 500)
+            cb.currentIndexChanged.connect(lambda i: self._set_len_mode(cb.itemData(i)))
+            g.addWidget(cb, row, 1, 1, 2)
+            row += 1
+            g.addWidget(QLabel("Pixel / Kerzen"), row, 0); g.addWidget(self.sp_px, row, 1); g.addWidget(self.sp_candles, row, 2)
+            self._set_len_mode(d["len_mode"])
+            row += 1
+        self.btn_tpl = QPushButton("Vorlage ▾"); self.btn_tpl.clicked.connect(self._template_menu)
         ok = QPushButton("Fertig"); ok.clicked.connect(self.accept)
-        g.addWidget(ok, row, 0, 1, 4)
+        g.addWidget(self.btn_tpl, row, 0, 1, 2); g.addWidget(ok, row, 2, 1, 2)
 
     def _color_btn(self, key):
         b = QPushButton(); b.setFixedSize(24, 24); b.setStyleSheet(color_btn_css(self.d[key]))
         b.clicked.connect(lambda checked, k=key, btn=b: self._pick(k, btn))
         return b
+
+    def _spin(self, key, lo, hi):
+        sp = QSpinBox(); sp.setRange(lo, hi); sp.setValue(self.d[key]); sp.setMinimumWidth(72)
+        sp.valueChanged.connect(lambda v, k=key: self._set(k, v))
+        return sp
+
+    def _style_combo(self, key):
+        cb = QComboBox()
+        for text, val in self.LINE_STYLES: cb.addItem(text, val)
+        cb.setCurrentIndex(max(0, cb.findData(self.d.get(key, "Solid"))))
+        cb.currentIndexChanged.connect(lambda i, k=key, c=cb: self._set(k, c.itemData(i)))
+        return cb
+
+    def _check(self, key, text):
+        c = QCheckBox(text); c.setChecked(self.d[key]); c.toggled.connect(lambda v, k=key: self._set(k, v))
+        return c
+
+    def _set_len_mode(self, mode):
+        self.d["len_mode"] = mode
+        self.sp_px.setEnabled(mode == "px"); self.sp_candles.setEnabled(mode == "candles")
+        if mode == "candles": self.ov._estimate_candle_px(self.d["p1"])
+        self.ov.update()
 
     def _set(self, key, val):
         self.d[key] = val
@@ -1413,19 +1705,117 @@ class DrawingDialog(QDialog):
         if c.isValid():
             self.d[key] = c; btn.setStyleSheet(color_btn_css(c)); self.ov.update()
 
+    def _style_data(self):
+        return {k: (v.name(QColor.HexArgb) if isinstance(v, QColor) else v) for k, v in self.d.items() if k not in STYLE_SKIP}
+
+    def _template_menu(self):
+        """Vorlagen je Werkzeug wie bei TradingView: speichern, anwenden, als Standard setzen, löschen."""
+        kind = self.d["type"]
+        names = sorted(TEMPLATES.get(kind, {}))
+        m = QMenu(self)
+        a_save = m.addAction("Als Vorlage speichern …")
+        a_default = m.addAction(f"Als Standard für neue: {TOOL_NAMES[kind]}")
+        apply_acts, del_acts = {}, {}
+        if names:
+            m.addSection("Vorlagen")
+            apply_acts = {m.addAction(n): n for n in names}
+            del_menu = m.addMenu("Vorlage löschen")
+            del_acts = {del_menu.addAction(n): n for n in names}
+        act = m.exec_(self.btn_tpl.mapToGlobal(QPoint(0, self.btn_tpl.height())))
+        if act is None: return
+        if act == a_save:
+            name, ok = QInputDialog.getText(self, "Vorlage speichern", f"Name der Vorlage für {TOOL_NAMES[kind]}:")
+            if ok and name.strip():
+                TEMPLATES.setdefault(kind, {})[name.strip()] = self._style_data(); save_templates()
+        elif act == a_default:
+            for k, v in self._style_data().items():
+                if k in TOOL_STYLES[kind]:
+                    TOOL_STYLES[kind][k] = QColor(v) if isinstance(TOOL_STYLES[kind][k], QColor) else v
+            self.ov.settings_changed()
+        elif act in apply_acts:
+            style_from_json(self.d, TEMPLATES[kind][apply_acts[act]])
+            self.ov.update()
+            # Fenster mit den neuen Werten neu öffnen
+            pos = self.pos(); idx = next(i for i, x in enumerate(self.ov.drawings) if x is self.d)
+            self.ov.open_properties(idx, pos - QPoint(16, 16))
+        elif act in del_acts:
+            TEMPLATES[kind].pop(del_acts[act], None); save_templates()
+
+
+class ObjectListDialog(QDialog):
+    """Objektliste wie der Objektbaum bei TradingView: alle Fibs und Zeichnungen - zeigen, fixieren, bearbeiten, löschen."""
+    def __init__(self, ov):
+        super().__init__(ov)
+        self.ov = ov
+        self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Dialog)
+        self.setWindowTitle("Objekte")
+        self.setStyleSheet(themed_dialog_css())
+        box = QVBoxLayout(self)
+        host = QWidget(); self.grid = QGridLayout(host); self.grid.setContentsMargins(0, 0, 0, 0)
+        box.addWidget(host)
+        row = QHBoxLayout()
+        for text, key, val in (("Alle zeigen", "hidden", False), ("Alle lösen", "locked", False)):
+            b = QPushButton(text); b.clicked.connect(lambda checked, k=key, v=val: self._all(k, v)); row.addWidget(b)
+        box.addLayout(row)
+
+    def refresh(self):
+        while self.grid.count():
+            w = self.grid.takeAt(0).widget()
+            if w: w.deleteLater()
+        objs = self.ov.all_objects()
+        if not objs: self.grid.addWidget(QLabel("Noch keine Objekte gezeichnet."), 0, 0)
+        for r, (kind, idx, o) in enumerate(objs):
+            self.grid.addWidget(QLabel(self.ov.name_of(o)), r, 0)
+            vis = QCheckBox("sichtbar"); vis.setChecked(not o.get("hidden"))
+            vis.toggled.connect(lambda v, o=o: self._set(o, "hidden", not v))
+            lock = QCheckBox("fixiert"); lock.setChecked(bool(o.get("locked")))
+            lock.toggled.connect(lambda v, o=o: self._set(o, "locked", v))
+            props = QPushButton("Eigenschaften"); props.clicked.connect(lambda checked, k=kind, o=o: self._props(k, o))
+            rm = QPushButton("Löschen"); rm.clicked.connect(lambda checked, k=kind, o=o: self._delete(k, o))
+            for c, w in enumerate((vis, lock, props, rm), start=1): self.grid.addWidget(w, r, c)
+        self.adjustSize()
+
+    def _index(self, kind, o):
+        lst = self.ov.fibs if kind == "fib" else self.ov.drawings
+        return next((i for i, x in enumerate(lst) if x is o), None)
+
+    def _set(self, o, key, val):
+        o[key] = val
+        self.ov.update()
+
+    def _all(self, key, val):
+        for _, _, o in self.ov.all_objects(): o[key] = val
+        self.ov.update(); self.refresh()
+
+    def _props(self, kind, o):
+        if kind == "fib":
+            if self.ov.main_panel: self.ov.main_panel.open_settings(fib=True)
+        else:
+            idx = self._index(kind, o)
+            if idx is not None: self.ov.open_properties(idx, QCursor.pos())
+
+    def _delete(self, kind, o):
+        idx = self._index(kind, o)
+        if idx is None: return
+        if QMessageBox.question(self, "Löschen bestätigen", f"Möchtest du „{self.ov.name_of(o)}“ wirklich löschen?",
+                                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes:
+            self.ov.delete_item(kind, idx)
+
 
 class SettingsPanel(QDialog):
+    LINE_STYLES = [("Durchgezogen", "Solid"), ("Gestrichelt", "Dash"), ("Gepunktet", "Dot")]
+
     def __init__(self, overlay, main_panel):
         super().__init__()
         self.ov = overlay
         self.main_panel = main_panel
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Window)
-        self.setWindowTitle("Einstellungen")
-        t = THEMES[THEME]
+        self.setWindowTitle(f"Einstellungen – Version {APP_VERSION}")
+        self.t = t = THEMES[THEME]
         self.setStyleSheet(f"QWidget {{ background-color: {t['bg']}; color: {t['text']}; }}" + indicator_css(t) + field_css(t))
 
-        self.setMinimumSize(650, 600)
-        self.resize(650, 750)
+        self.setMinimumSize(700, 600)
+        self.resize(700, 800)
 
         main_layout = QVBoxLayout()
         self.scroll = scroll = QScrollArea()
@@ -1434,7 +1824,8 @@ class SettingsPanel(QDialog):
         layout = QVBoxLayout(scroll_content)
         layout.setSpacing(15)
 
-        box_style = f"""
+        tb = t.get("title_border", GOLD)
+        self.box_style = box_style = f"""
             QGroupBox {{
                 border: 1px solid {t['border']};
                 border-radius: 5px;
@@ -1447,91 +1838,112 @@ class SettingsPanel(QDialog):
                 subcontrol-position: top center;
                 padding: 2px 8px;
                 background-color: {t['bg']};
-                border: 1px solid {t['border']};
+                border: 1px solid {tb};
                 border-radius: 4px;
                 color: {t['title']};
             }}
         """
-        btn_style = (f"QPushButton {{ background-color: {t['btn']}; color: {t['text']}; border: 1px solid {t['btn_border']}; "
-                     f"border-radius: 4px; padding: 5px 10px; }} QPushButton:hover {{ background-color: {t['btn_hover']}; }}")
+        self.btn_style = btn_style = (f"QPushButton {{ background-color: {t['btn']}; color: {t['text']}; border: 1px solid {t['btn_border']}; "
+                                      f"border-radius: 4px; padding: 5px 10px; }} QPushButton:hover {{ background-color: {t['btn_hover']}; "
+                                      f"border: 1px solid {t.get('focus', GOLD)}; }}")
+        muted = f"color: {t['muted']}; font-weight: normal;"
 
-        grp_presets = QGroupBox("Presets (Set-Dateien)")
+        # ===== PRESETS + SPEICHERPLÄTZE =====
+        grp_presets = QGroupBox("Presets && Speicherplätze")
         grp_presets.setStyleSheet(box_style)
         pr_layout = QVBoxLayout()
-        lbl_presets = QLabel("Alle Einstellungen werden automatisch gespeichert und beim nächsten Start geladen.\n"
-                             "Zusätzlich kannst du verschiedene Setups als eigene Datei sichern und laden.")
-        lbl_presets.setWordWrap(True)
-        lbl_presets.setStyleSheet(f"color: {t['muted']}; font-weight: normal;")
+        lbl_presets = QLabel("Alle Einstellungen werden automatisch gespeichert und beim nächsten Start geladen. "
+                             "Zusätzlich hast du 5 Speicherplätze mit eigenem Namen und kannst Set-Dateien sichern.")
+        lbl_presets.setWordWrap(True); lbl_presets.setStyleSheet(muted)
         pr_layout.addWidget(lbl_presets)
+        slots_grid = QGridLayout()
+        self.slots = load_slots()
+        self.slot_names, self.slot_info = [], []
+        for i, slot in enumerate(self.slots):
+            ed = QLineEdit(slot["name"]); ed.setPlaceholderText(f"Speicherplatz {i + 1}")
+            ed.editingFinished.connect(lambda i=i, ed=ed: self._rename_slot(i, ed.text()))
+            b_save = QPushButton("Speichern"); b_save.setStyleSheet(btn_style)
+            b_save.clicked.connect(lambda checked, i=i: self._save_slot(i))
+            b_load = QPushButton("Laden"); b_load.setStyleSheet(btn_style)
+            b_load.clicked.connect(lambda checked, i=i: self._load_slot(i))
+            info = QLabel(slot.get("saved") or "leer"); info.setStyleSheet(muted)
+            slots_grid.addWidget(QLabel(f"{i + 1}."), i, 0); slots_grid.addWidget(ed, i, 1)
+            slots_grid.addWidget(b_save, i, 2); slots_grid.addWidget(b_load, i, 3); slots_grid.addWidget(info, i, 4)
+            self.slot_names.append(ed); self.slot_info.append(info)
+        slots_grid.setColumnStretch(1, 1)
+        pr_layout.addLayout(slots_grid)
         pr_btns = QHBoxLayout()
-        for text, slot in (("Speichern unter …", self.save_preset), ("Laden …", self.load_preset),
-                           ("Standard wiederherstellen", self.reset_defaults)):
+        for text, slot in (("Set-Datei speichern …", self.save_preset), ("Set-Datei laden …", self.load_preset)):
             b = QPushButton(text); b.setStyleSheet(btn_style); b.clicked.connect(slot)
             pr_btns.addWidget(b)
+        b_reset = QPushButton("Auf Standardwerte zurücksetzen")
+        b_reset.setStyleSheet("QPushButton { background-color: #7a1f2b; color: #ffffff; border: 1px solid #ff7c8a; border-radius: 4px; "
+                              "padding: 5px 10px; font-weight: bold; } QPushButton:hover { background-color: #9a2836; }")
+        b_reset.clicked.connect(self.reset_defaults)
+        pr_btns.addWidget(b_reset)
         pr_layout.addLayout(pr_btns)
         grp_presets.setLayout(pr_layout)
         layout.addWidget(grp_presets)
 
-        # ===== FIB-DARSTELLUNG - aufgebaut wie der Fib-Retracement-Dialog bei TradingView =====
+        # ===== FIB-DARSTELLUNG - 1:1 wie der Fib-Retracement-Dialog bei TradingView =====
         self.grp_fib = grp_fib = QGroupBox("Fib-Darstellung (wie TradingView)")
         grp_fib.setStyleSheet(box_style)
         fg = QGridLayout()
-        def fib_check(text, key):
-            c = QCheckBox(text); c.setChecked(FIB_STYLE[key])
-            c.toggled.connect(lambda v, k=key: self.set_fib(k, v))
-            return c
-        def fib_combo(key, items):
-            cb = QComboBox()
-            for text, val in items: cb.addItem(text, val)
-            cb.setCurrentIndex(max(0, cb.findData(FIB_STYLE[key])))
-            cb.currentIndexChanged.connect(lambda i, k=key, c=cb: self.set_fib(k, c.itemData(i)))
-            return cb
-        def fib_color(key):
-            b = QPushButton(); b.setFixedSize(24, 24); b.setStyleSheet(color_btn_css(FIB_STYLE[key]))
-            b.clicked.connect(lambda checked, k=key, btn=b: self.pick_fib_color(k, btn))
-            return b
-        def fib_spin(key, lo, hi):
-            sp = QSpinBox(); sp.setRange(lo, hi); sp.setValue(FIB_STYLE[key])
-            sp.valueChanged.connect(lambda v, k=key: self.set_fib(k, v))
-            return sp
-        styles = [("Gestrichelt", "Dash"), ("Durchgezogen", "Solid"), ("Gepunktet", "Dot")]
-        rows = [
-            (fib_check("Trendlinie (Diagonale)", "trend"), fib_color("trend_color"), fib_combo("trend_style", styles)),
-            (QLabel("Trendlinie Dicke"), fib_spin("trend_width", 1, 6)),
-            (QLabel("Verlängern"), fib_combo("extend", [("Nicht erweitern", "none"), ("Linien nach links", "left"),
-                                                         ("Linien nach rechts", "right"), ("Nach beiden Seiten", "both")])),
-            (fib_check("Hintergrund (Flächen)", "background"),),
-            (fib_check("Umkehren (0 und 1 tauschen)", "reverse"),),
-            (fib_check("Preise", "prices"), fib_check("Namen (E1, SL1 …)", "names")),
-            (QLabel("Level"), fib_combo("level_fmt", [("Werte (0,5)", "value"), ("Prozent (50%)", "percent")])),
-            (QLabel("Beschriftungen"), fib_combo("label_h", [("Links", "left"), ("Zentriert", "center"), ("Rechts", "right")]),
-             fib_combo("label_v", [("Oben", "top"), ("Mitte", "middle"), ("Unten", "bottom")])),
-            (QLabel("Schriftgröße"), fib_spin("font_size", 6, 24)),
-            (fib_check("Dunkler Kasten hinter der Schrift", "label_box"),),
-            (fib_check("Eine Farbe verwenden", "one_color"), fib_color("one_color_value")),
-            (QLabel("Zahlenformat"), fib_combo("num_fmt", [("Deutsch: 0,5 (81.751,0)", "de"), ("Englisch: 0.5 (81751.0)", "en")])),
-            (fib_check("Linie 0 anzeigen", "show_0"), fib_color("color_0")),
-            (fib_check("Linie 1 anzeigen", "show_1"), fib_color("color_1")),
-        ]
-        for r, widgets in enumerate(rows):
-            for c, wdg in enumerate(widgets): fg.addWidget(wdg, r, c)
-        # Deckkraft-Regler gehört in die Zeile "Hintergrund"
-        bg_row = 3
+        r = 0
+        fg.addWidget(self._fib_check("Trendlinie (Diagonale)", "trend"), r, 0)
+        fg.addWidget(self._fib_color("trend_color"), r, 1); fg.addWidget(self._fib_spin("trend_width", 1, 6), r, 2)
+        fg.addWidget(self._fib_combo("trend_style", self.LINE_STYLES), r, 3)
+        r += 1
+        fg.addWidget(QLabel("Levels-Linie"), r, 0)
+        fg.addWidget(self._fib_spin("level_width", 1, 6), r, 2); fg.addWidget(self._fib_combo("level_style", self.LINE_STYLES), r, 3)
+        r += 1
+        fg.addWidget(QLabel("Verlängern"), r, 0)
+        fg.addWidget(self._fib_combo("extend", [("Nicht erweitern", "none"), ("Linien nach links", "left"),
+                                                ("Linien nach rechts", "right"), ("Nach beiden Seiten", "both")]), r, 1, 1, 3)
+        r += 1
+        # Level-Liste: 24 Plätze in 2 Spalten - je Haken, Wert, Farbe
+        lv_grid = QGridLayout(); lv_grid.setHorizontalSpacing(8)
+        for i, lv in enumerate(FIB_LEVELS):
+            row, col = i // 2, (i % 2) * 4
+            cb = QCheckBox(); cb.setChecked(lv["on"]); cb.toggled.connect(lambda v, lv=lv: self._set_level(lv, "on", v))
+            sp = QDoubleSpinBox(); sp.setRange(-10, 10); sp.setDecimals(3); sp.setSingleStep(0.001); sp.setValue(lv["value"])
+            sp.valueChanged.connect(lambda v, lv=lv: self._set_level(lv, "value", v))
+            b = QPushButton(); b.setFixedSize(24, 24); b.setStyleSheet(color_btn_css(lv["color"]))
+            b.clicked.connect(lambda checked, lv=lv, btn=b: self._pick_level_color(lv, btn))
+            lv_grid.addWidget(cb, row, col); lv_grid.addWidget(sp, row, col + 1); lv_grid.addWidget(b, row, col + 2)
+        lv_grid.setColumnMinimumWidth(3, 18)
+        fg.addLayout(lv_grid, r, 0, 1, 4)
+        r += 1
+        fg.addWidget(self._fib_check("Eine Farbe verwenden", "one_color"), r, 0); fg.addWidget(self._fib_color("one_color_value"), r, 1)
+        r += 1
+        fg.addWidget(self._fib_check("Hintergrund", "background"), r, 0)
         self.sl_bg = QSlider(Qt.Horizontal); self.sl_bg.setRange(0, 100); self.sl_bg.setValue(FIB_STYLE["bg_opacity"])
         self.lbl_bg = QLabel(f"{FIB_STYLE['bg_opacity']} %")
         self.sl_bg.valueChanged.connect(lambda v: (self.lbl_bg.setText(f"{v} %"), self.set_fib("bg_opacity", v)))
-        fg.addWidget(self.sl_bg, bg_row, 1, 1, 1); fg.addWidget(self.lbl_bg, bg_row, 2)
-        fg.setColumnStretch(1, 1)
-        r = len(rows)
-        fg.addWidget(QLabel("<b>Zusätzliche Fib-Level</b>  (Haken = anzeigen, ✕ = entfernen)"), r, 0, 1, 3)
-        self.extra_layout = QVBoxLayout()
-        for lv in FIB_EXTRA: self._add_extra_row(lv)
-        fg.addLayout(self.extra_layout, r + 1, 0, 1, 3)
-        btn_add = QPushButton("+ Level hinzufügen"); btn_add.setStyleSheet(btn_style); btn_add.clicked.connect(self.add_extra_level)
-        fg.addWidget(btn_add, r + 2, 0, 1, 3)
+        fg.addWidget(self.sl_bg, r, 1, 1, 2); fg.addWidget(self.lbl_bg, r, 3)
+        r += 1
+        fg.addWidget(self._fib_check("Umkehren", "reverse"), r, 0)
+        r += 1
+        fg.addWidget(self._fib_check("Preise", "prices"), r, 0); fg.addWidget(self._fib_check("Namen (E1, SL1 …)", "names"), r, 1, 1, 3)
+        r += 1
+        fg.addWidget(QLabel("Level"), r, 0)
+        fg.addWidget(self._fib_combo("level_fmt", [("Werte", "value"), ("Prozent", "percent")]), r, 1, 1, 2)
+        r += 1
+        fg.addWidget(QLabel("Beschriftungen"), r, 0)
+        fg.addWidget(self._fib_combo("label_h", [("Links", "left"), ("Zentriert", "center"), ("Rechts", "right")]), r, 1, 1, 2)
+        fg.addWidget(self._fib_combo("label_v", [("Oben", "top"), ("Mitte", "middle"), ("Unten", "bottom")]), r, 3)
+        r += 1
+        fg.addWidget(QLabel("Schriftgröße"), r, 0); fg.addWidget(self._fib_spin("font_size", 6, 24), r, 1)
+        r += 1
+        fg.addWidget(self._fib_check("Dunkler Kasten hinter der Schrift", "label_box"), r, 0, 1, 2)
+        r += 1
+        fg.addWidget(QLabel("Zahlenformat"), r, 0)
+        fg.addWidget(self._fib_combo("num_fmt", [("Deutsch: 0,5 (81.751,0)", "de"), ("Englisch: 0.5 (81751.0)", "en")]), r, 1, 1, 3)
+        r += 1
         btn_tv = QPushButton("Wie mein TradingView-Fib einstellen (Farben + Linien)")
         btn_tv.setStyleSheet(btn_style); btn_tv.clicked.connect(self.apply_tv_look)
-        fg.addWidget(btn_tv, r + 3, 0, 1, 3)
+        fg.addWidget(btn_tv, r, 0, 1, 4)
+        fg.setColumnStretch(4, 1)
         grp_fib.setLayout(fg)
         layout.addWidget(grp_fib)
 
@@ -1578,7 +1990,7 @@ class SettingsPanel(QDialog):
         eg.addWidget(sp_pre, 6, 2)
         lbl_ext = QLabel("Test-Funktion: Das Programm schaut alle 0,7 Sekunden auf den Bildschirm und sucht die letzte Kerze. "
                          "Das klappt nur, solange der Chart nicht verschoben oder neu skaliert wird.")
-        lbl_ext.setWordWrap(True); lbl_ext.setStyleSheet(f"color: {t['muted']}; font-weight: normal;")
+        lbl_ext.setWordWrap(True); lbl_ext.setStyleSheet(muted)
         eg.addWidget(lbl_ext, 7, 0, 1, 4)
         eg.setColumnStretch(4, 1)
         grp_ext.setLayout(eg)
@@ -1598,6 +2010,7 @@ class SettingsPanel(QDialog):
         grp_rules.setLayout(rl_layout)
         layout.addWidget(grp_rules)
 
+        # ===== HANDELS-SETUPS =====
         grp_trade = QGroupBox("Handels-Setups")
         grp_trade.setStyleSheet(box_style)
         trade_layout = QVBoxLayout()
@@ -1610,125 +2023,78 @@ class SettingsPanel(QDialog):
         self.cb_global.setChecked(USE_GLOBAL_R)
         self.cb_global.stateChanged.connect(self.toggle_global_r)
         g_layout.addWidget(self.cb_global)
-
         r_layout = QHBoxLayout()
-        r_layout.addWidget(QLabel("TP1:"))
-        self.cb_gtp1 = QComboBox()
-        self.cb_gtp1.setEditable(True)
-        r_layout.addWidget(self.cb_gtp1)
-        r_layout.addWidget(QLabel("TP2:"))
-        self.cb_gtp2 = QComboBox()
-        self.cb_gtp2.setEditable(True)
-        r_layout.addWidget(self.cb_gtp2)
-        r_layout.addWidget(QLabel("TP3:"))
-        self.cb_gtp3 = QComboBox()
-        self.cb_gtp3.setEditable(True)
-        r_layout.addWidget(self.cb_gtp3)
-
         r_vals = [fmt_num(x) for x in [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 10, 15, 20]]
-        for cb in (self.cb_gtp1, self.cb_gtp2, self.cb_gtp3):
-            cb.addItems(r_vals)
-
-        self.cb_gtp1.setCurrentText(fmt_num(GLOBAL_TP1_R))
-        self.cb_gtp2.setCurrentText(fmt_num(GLOBAL_TP2_R))
-        self.cb_gtp3.setCurrentText(fmt_num(GLOBAL_TP3_R))
-
+        self.cb_gtp = []
+        for n, val in ((1, GLOBAL_TP1_R), (2, GLOBAL_TP2_R), (3, GLOBAL_TP3_R)):
+            r_layout.addWidget(QLabel(f"TP{n}:"))
+            cb = QComboBox(); cb.setEditable(True); cb.addItems(r_vals); cb.setCurrentText(fmt_num(val))
+            r_layout.addWidget(cb); self.cb_gtp.append(cb)
         g_layout.addLayout(r_layout)
+        self.lbl_global_hint = QLabel("⚠ Globale R-Werte sind aktiv – sie gelten für alle Setups. Die R-Spalte unten zeigt sie "
+                                      "ausgegraut an. Die eigenen R-Werte der Setups gelten erst wieder, wenn du „Global“ ausschaltest.")
+        self.lbl_global_hint.setWordWrap(True)
+        self.lbl_global_hint.setStyleSheet(f"color: {t.get('focus', GOLD)}; font-weight: normal;")
+        g_layout.addWidget(self.lbl_global_hint)
         grp_global.setLayout(g_layout)
         trade_layout.addWidget(grp_global)
 
         self.spin_e = []; self.spin_sl = []; self.spin_be = []
         self.spin_tp1 = []; self.spin_tp2 = []; self.spin_tp3 = []
-        self.cb_stp1 = []; self.cb_stp2 = []; self.cb_stp3 = []
+        self.cb_stp = [[], [], []]  # R-Auswahl TP1/TP2/TP3 je Setup
         self.color_btns = {"e":[], "sl":[], "be":[], "tp1":[], "tp2":[], "tp3":[]}
-        self.thick_spins = {"e":[], "sl":[], "be":[], "tp1":[], "tp2":[], "tp3":[]}
-        self.style_cbs = {"e":[], "sl":[], "be":[], "tp1":[], "tp2":[], "tp3":[]}
 
         for i, s in enumerate(SETUPS):
             grp = QGroupBox(f"Setup {s['n']}")
             grp.setStyleSheet(box_style)
             grid = QGridLayout()
-
-            grid.addWidget(QLabel("<b>Linie</b>"), 0, 0)
-            grid.addWidget(QLabel("<b>Wert</b>"), 0, 1)
-            grid.addWidget(QLabel("<b>R</b>"), 0, 2)
-            grid.addWidget(QLabel("<b>Farbe</b>"), 0, 3)
-            grid.addWidget(QLabel("<b>Dicke</b>"), 0, 4)
-            grid.addWidget(QLabel("<b>Stil</b>"), 0, 5)
+            for c, head in enumerate(("Linie", "Wert", "R", "Farbe", "Dicke", "Stil")): grid.addWidget(QLabel(f"<b>{head}</b>"), 0, c)
 
             def add_row(row, label, spin_widget, r_combo, key):
                 grid.addWidget(QLabel(label), row, 0)
                 grid.addWidget(spin_widget, row, 1)
-                if r_combo: grid.addWidget(r_combo, row, 2)
-                else: grid.addWidget(QLabel("-"), row, 2)
-
-                btn_col = QPushButton()
-                btn_col.setFixedSize(24, 24)
+                grid.addWidget(r_combo if r_combo else QLabel("-"), row, 2)
+                btn_col = QPushButton(); btn_col.setFixedSize(24, 24)
                 btn_col.setStyleSheet(color_btn_css(s[f'color_{key}']))
                 btn_col.clicked.connect(lambda checked, idx=i, k=key: self.pick_color(idx, k))
                 self.color_btns[key].append(btn_col)
                 grid.addWidget(btn_col, row, 3)
-
                 sp_thick = QSpinBox(); sp_thick.setRange(1, 10); sp_thick.setValue(s[f'thick_{key}'])
                 sp_thick.valueChanged.connect(lambda val, idx=i, k=key: self.update_thick(idx, k, val))
-                self.thick_spins[key].append(sp_thick)
                 grid.addWidget(sp_thick, row, 4)
-
-                cb_style = QComboBox(); cb_style.addItems(["Solid", "Dash", "Dot"])
-                cb_style.setCurrentText(s[f'style_{key}'])
-                cb_style.currentTextChanged.connect(lambda val, idx=i, k=key: self.update_style(idx, k, val))
-                self.style_cbs[key].append(cb_style)
+                cb_style = QComboBox()
+                for text, val in self.LINE_STYLES: cb_style.addItem(text, val)
+                cb_style.setCurrentIndex(max(0, cb_style.findData(s[f'style_{key}'])))
+                cb_style.currentIndexChanged.connect(lambda ix, idx=i, k=key, c=cb_style: self.update_style(idx, k, c.itemData(ix)))
                 grid.addWidget(cb_style, row, 5)
 
-            sp_e = QDoubleSpinBox(); sp_e.setRange(-10000, 10000); sp_e.setDecimals(3); sp_e.setSingleStep(0.001); sp_e.setValue(s["entry"])
-            sp_e.valueChanged.connect(lambda v, idx=i: self.update_val(idx, "entry", v))
-            self.spin_e.append(sp_e)
-            add_row(1, "Entry", sp_e, None, "e")
+            def value_spin(val, editable, key=None):
+                sp = QDoubleSpinBox(); sp.setRange(-10000, 10000); sp.setDecimals(3); sp.setSingleStep(0.001); sp.setValue(val)
+                if editable: sp.valueChanged.connect(lambda v, idx=i, k=key: self.update_val(idx, k, v))
+                else:
+                    sp.setReadOnly(True); sp.setButtonSymbols(QDoubleSpinBox.NoButtons)
+                    sp.setStyleSheet(f"background-color: {mix(t['bg'], '#ffffff', 0.12)}; color: {t['muted']};")
+                return sp
 
-            sp_sl = QDoubleSpinBox(); sp_sl.setRange(-10000, 10000); sp_sl.setDecimals(3); sp_sl.setSingleStep(0.001); sp_sl.setValue(s["sl"])
-            sp_sl.valueChanged.connect(lambda v, idx=i: self.update_val(idx, "sl", v))
-            self.spin_sl.append(sp_sl)
-            add_row(2, "SL", sp_sl, None, "sl")
-
-            sp_be = QDoubleSpinBox(); sp_be.setRange(-10000, 10000); sp_be.setDecimals(3); sp_be.setValue(s["be"])
-            sp_be.setReadOnly(True); sp_be.setButtonSymbols(QDoubleSpinBox.NoButtons); sp_be.setStyleSheet("background-color: #333; color: #aaa;")
-            self.spin_be.append(sp_be)
-            add_row(3, "BE", sp_be, None, "be")
-
-            sp_tp1 = QDoubleSpinBox(); sp_tp1.setRange(-10000, 10000); sp_tp1.setDecimals(3); sp_tp1.setValue(s["tp1"])
-            sp_tp1.setReadOnly(True); sp_tp1.setButtonSymbols(QDoubleSpinBox.NoButtons); sp_tp1.setStyleSheet("background-color: #333; color: #aaa;")
-            self.spin_tp1.append(sp_tp1)
-            cb_stp1 = QComboBox(); cb_stp1.setEditable(True); cb_stp1.addItems(r_vals); cb_stp1.setCurrentText(fmt_num(s["r_tp1"]))
-            cb_stp1.currentTextChanged.connect(lambda v, idx=i: self.update_r_setup(idx, "r_tp1", v))
-            self.cb_stp1.append(cb_stp1)
-            add_row(4, "TP1", sp_tp1, cb_stp1, "tp1")
-
-            sp_tp2 = QDoubleSpinBox(); sp_tp2.setRange(-10000, 10000); sp_tp2.setDecimals(3); sp_tp2.setValue(s["tp2"])
-            sp_tp2.setReadOnly(True); sp_tp2.setButtonSymbols(QDoubleSpinBox.NoButtons); sp_tp2.setStyleSheet("background-color: #333; color: #aaa;")
-            self.spin_tp2.append(sp_tp2)
-            cb_stp2 = QComboBox(); cb_stp2.setEditable(True); cb_stp2.addItems(r_vals); cb_stp2.setCurrentText(fmt_num(s["r_tp2"]))
-            cb_stp2.currentTextChanged.connect(lambda v, idx=i: self.update_r_setup(idx, "r_tp2", v))
-            self.cb_stp2.append(cb_stp2)
-            add_row(5, "TP2", sp_tp2, cb_stp2, "tp2")
-
-            sp_tp3 = QDoubleSpinBox(); sp_tp3.setRange(-10000, 10000); sp_tp3.setDecimals(3); sp_tp3.setValue(s["tp3"])
-            sp_tp3.setReadOnly(True); sp_tp3.setButtonSymbols(QDoubleSpinBox.NoButtons); sp_tp3.setStyleSheet("background-color: #333; color: #aaa;")
-            self.spin_tp3.append(sp_tp3)
-            cb_stp3 = QComboBox(); cb_stp3.setEditable(True); cb_stp3.addItems(r_vals); cb_stp3.setCurrentText(fmt_num(s["r_tp3"]))
-            cb_stp3.currentTextChanged.connect(lambda v, idx=i: self.update_r_setup(idx, "r_tp3", v))
-            self.cb_stp3.append(cb_stp3)
-            add_row(6, "TP3", sp_tp3, cb_stp3, "tp3")
-
+            sp_e = value_spin(s["entry"], True, "entry"); self.spin_e.append(sp_e); add_row(1, "Entry", sp_e, None, "e")
+            sp_sl = value_spin(s["sl"], True, "sl"); self.spin_sl.append(sp_sl); add_row(2, "SL", sp_sl, None, "sl")
+            sp_be = value_spin(s["be"], False); self.spin_be.append(sp_be); add_row(3, "BE", sp_be, None, "be")
+            for n, (lst, key) in enumerate(((self.spin_tp1, "tp1"), (self.spin_tp2, "tp2"), (self.spin_tp3, "tp3"))):
+                sp = value_spin(s[key], False); lst.append(sp)
+                cb = QComboBox(); cb.setEditable(True); cb.addItems(r_vals); cb.setCurrentText(fmt_num(s[f"r_{key}"]))
+                cb.currentTextChanged.connect(lambda v, idx=i, k=f"r_{key}": self.update_r_setup(idx, k, v))
+                self.cb_stp[n].append(cb)
+                add_row(4 + n, key.upper(), sp, cb, key)
             grp.setLayout(grid)
             trade_layout.addWidget(grp)
 
         grp_trade.setLayout(trade_layout)
         layout.addWidget(grp_trade)
 
+        # ===== DARSTELLUNG & VERHALTEN =====
         grp_layout = QGroupBox("Darstellung && Verhalten")  # && = ein "&" (einzelnes & wird sonst zu "_")
         grp_layout.setStyleSheet(box_style)
         l_layout = QVBoxLayout()
-
         design_layout = QHBoxLayout()
         design_layout.addWidget(QLabel("Design:"))
         self.cb_theme = QComboBox(); self.cb_theme.addItems(list(THEMES)); self.cb_theme.setCurrentText(THEME)
@@ -1738,27 +2104,23 @@ class SettingsPanel(QDialog):
         self.cb_matrix.toggled.connect(self.main_panel.set_matrix)
         design_layout.addWidget(self.cb_matrix)
         l_layout.addLayout(design_layout)
-
         self.cb_rules = QCheckBox("Regeln des SK-Systems im Dashboard anzeigen")
         self.cb_rules.setChecked(SHOW_RULES)
         self.cb_rules.stateChanged.connect(self.toggle_rules)
         l_layout.addWidget(self.cb_rules)
-
         self.cb_auto_resize = QCheckBox("Fensterhöhe automatisch an Inhalt anpassen")
         self.cb_auto_resize.setChecked(AUTO_RESIZE_WINDOW)
         self.cb_auto_resize.stateChanged.connect(self.toggle_auto_resize)
         l_layout.addWidget(self.cb_auto_resize)
-
+        cb_num = QCheckBox("Objekt-Nummern behalten (Rechteck 3 bleibt Rechteck 3, auch wenn ein anderes gelöscht wird)")
+        cb_num.setChecked(NUM_KEEP); cb_num.toggled.connect(self.set_num_keep)
+        l_layout.addWidget(cb_num)
         len_layout = QHBoxLayout()
         len_layout.addWidget(QLabel("Fib-Breite, wenn beide Punkte genau übereinander liegen (px):"))
-        self.spin_len = QSpinBox()
-        self.spin_len.setRange(100, 3000)
-        self.spin_len.setValue(self.ov.line_length)
-        self.spin_len.setSingleStep(50)
-        self.spin_len.valueChanged.connect(self.update_length)
+        self.spin_len = QSpinBox(); self.spin_len.setRange(100, 3000); self.spin_len.setValue(self.ov.line_length)
+        self.spin_len.setSingleStep(50); self.spin_len.valueChanged.connect(self.update_length)
         len_layout.addWidget(self.spin_len)
         l_layout.addLayout(len_layout)
-
         price_layout = QHBoxLayout()
         price_layout.addWidget(QLabel("Preise abfragen bei:"))
         self.cb_price_ref = QComboBox()
@@ -1772,65 +2134,59 @@ class SettingsPanel(QDialog):
         self.spin_dec.valueChanged.connect(self.update_decimals)
         price_layout.addWidget(self.spin_dec)
         l_layout.addLayout(price_layout)
-
         grp_layout.setLayout(l_layout)
         layout.addWidget(grp_layout)
 
+        # ===== ZEICHENWERKZEUGE - gleiche Reihenfolge wie im Dashboard, je Werkzeug ein Block =====
         grp_tools = QGroupBox("Zeichenwerkzeuge && Magnet")
         grp_tools.setStyleSheet(box_style)
         t_layout = QVBoxLayout()
-        t_grid = QGridLayout()
-        for c, head in enumerate(("Werkzeug", "Farbe", "Dicke", "Stil")): t_grid.addWidget(QLabel(f"<b>{head}</b>"), 0, c)
-        self.tool_color_btns = {}
-        line_styles = [("Durchgezogen", "Solid"), ("Gestrichelt", "Dash"), ("Gepunktet", "Dot")]
-        for row, kind in enumerate(TOOL_NAMES, start=1):
-            st = TOOL_STYLES[kind]
-            t_grid.addWidget(QLabel(TOOL_NAMES[kind]), row, 0)
-            b = QPushButton(); b.setFixedSize(24, 24); b.setStyleSheet(color_btn_css(st["color"]))
-            b.clicked.connect(lambda checked, k=kind: self.pick_tool_color(k))
-            self.tool_color_btns[kind] = b
-            t_grid.addWidget(b, row, 1)
-            sp = QSpinBox(); sp.setRange(1, 6); sp.setValue(st["width"])
-            sp.valueChanged.connect(lambda v, k=kind: self.update_tool_width(k, v))
-            t_grid.addWidget(sp, row, 2)
-            cb = QComboBox()
-            for text, val in line_styles: cb.addItem(text, val)
-            cb.setCurrentIndex(max(0, cb.findData(st["style"])))
-            cb.currentIndexChanged.connect(lambda i, k=kind, c=cb: self.set_tool(k, "style", c.itemData(i)))
-            t_grid.addWidget(cb, row, 3)
-        # Rechteck: Füllung (Farbe + Deckkraft) und Mittellinie - wie bei TradingView
-        r, rs = len(TOOL_NAMES) + 1, TOOL_STYLES["rect"]
-        chk_fill = QCheckBox("Rechteck: Füllung"); chk_fill.setChecked(rs["fill"])
-        chk_fill.toggled.connect(lambda v: self.set_tool("rect", "fill", v))
-        t_grid.addWidget(chk_fill, r, 0)
-        btn_fill = QPushButton(); btn_fill.setFixedSize(24, 24); btn_fill.setStyleSheet(color_btn_css(rs["fill_color"]))
-        btn_fill.clicked.connect(lambda checked, btn=btn_fill: self.pick_tool_key("rect", "fill_color", btn))
-        t_grid.addWidget(btn_fill, r, 1)
-        sl_fill = QSlider(Qt.Horizontal); sl_fill.setRange(0, 100); sl_fill.setValue(rs["fill_opacity"])
-        lbl_fill = QLabel(f"Deckkraft {rs['fill_opacity']} %")
-        sl_fill.valueChanged.connect(lambda v: (lbl_fill.setText(f"Deckkraft {v} %"), self.set_tool("rect", "fill_opacity", v)))
-        t_grid.addWidget(sl_fill, r, 2); t_grid.addWidget(lbl_fill, r, 3)
-        chk_mid = QCheckBox("Rechteck: Mittellinie"); chk_mid.setChecked(rs["midline"])
-        chk_mid.toggled.connect(lambda v: self.set_tool("rect", "midline", v))
-        t_grid.addWidget(chk_mid, r + 1, 0, 1, 2)
-        t_grid.setColumnStretch(4, 1)
-        t_layout.addLayout(t_grid)
+        for kind in TOOL_NAMES:
+            sub = QGroupBox(TOOL_NAMES[kind]); sub.setStyleSheet(box_style)
+            sg = QGridLayout()
+            sg.addWidget(QLabel("Rahmen" if kind == "rect" else "Linie"), 0, 0)
+            sg.addWidget(self._tool_color(kind, "color"), 0, 1); sg.addWidget(self._tool_spin(kind, "width", 1, 6), 0, 2)
+            sg.addWidget(self._tool_combo(kind, "style", self.LINE_STYLES), 0, 3)
+            if kind == "hray":
+                sg.addWidget(QLabel("Länge"), 1, 0)
+                sg.addWidget(self._tool_combo(kind, "len_mode", [("Endlos bis zum Rand", "endless"), ("Pixel", "px"),
+                                                                 ("Kerzen (am Bildschirm gemessen)", "candles")]), 1, 1, 1, 3)
+                sg.addWidget(QLabel("Pixel / Kerzen"), 2, 0)
+                sg.addWidget(self._tool_spin(kind, "len_px", 10, 4000), 2, 2); sg.addWidget(self._tool_spin(kind, "len_candles", 1, 500), 2, 3)
+            if kind == "rect":
+                sg.addWidget(self._tool_check(kind, "fill", "Füllung"), 1, 0); sg.addWidget(self._tool_color(kind, "fill_color"), 1, 1)
+                sl_fill = QSlider(Qt.Horizontal); sl_fill.setRange(0, 100); sl_fill.setValue(TOOL_STYLES["rect"]["fill_opacity"])
+                lbl_fill = QLabel(f"{TOOL_STYLES['rect']['fill_opacity']} %")
+                sl_fill.valueChanged.connect(lambda v, lbl=lbl_fill: (lbl.setText(f"{v} %"), self.set_tool("rect", "fill_opacity", v)))
+                sg.addWidget(sl_fill, 1, 2); sg.addWidget(lbl_fill, 1, 3)
+                sg.addWidget(self._tool_check(kind, "midline", "Mittellinie"), 2, 0); sg.addWidget(self._tool_color(kind, "mid_color"), 2, 1)
+                sg.addWidget(self._tool_spin(kind, "mid_width", 1, 6), 2, 2); sg.addWidget(self._tool_combo(kind, "mid_style", self.LINE_STYLES), 2, 3)
+            sg.setColumnStretch(4, 1)
+            sub.setLayout(sg)
+            t_layout.addWidget(sub)
+        sub_mag = QGroupBox("Magnet"); sub_mag.setStyleSheet(box_style)
+        mgl = QVBoxLayout()
         self.cb_magnet = QCheckBox("Magnet an (Punkte rasten an Hoch / Tief der Kerze ein)")
         self.cb_magnet.setChecked(MAGNET_ON)
         self.cb_magnet.stateChanged.connect(lambda st: self.main_panel.set_magnet(bool(st)))
-        t_layout.addWidget(self.cb_magnet)
+        mgl.addWidget(self.cb_magnet)
+        cb_mag_draw = QCheckBox("Magnet auch für Zeichnungen (Linien, Rechtecke)"); cb_mag_draw.setChecked(MAGNET_DRAWINGS)
+        cb_mag_draw.toggled.connect(self.set_magnet_drawings)
+        mgl.addWidget(cb_mag_draw)
         mag_layout = QHBoxLayout()
         mag_layout.addWidget(QLabel("Magnet-Stärke:"))
         self.cb_magnet_mode = QComboBox()
         self.cb_magnet_mode.addItem("Schwach – nur wenn du nah an der Kerze klickst", "weak")
-        self.cb_magnet_mode.addItem("Stark – immer an der Kerze unter dem Mauszeiger", "strong")
+        self.cb_magnet_mode.addItem("Stark – an der Kerze unter dem Mauszeiger (in der Nähe)", "strong")
         self.cb_magnet_mode.setCurrentIndex(self.cb_magnet_mode.findData(MAGNET_MODE))
         self.cb_magnet_mode.currentIndexChanged.connect(self.update_magnet_mode)
         mag_layout.addWidget(self.cb_magnet_mode, 1)
-        t_layout.addLayout(mag_layout)
-        lbl_tools = QLabel("Neue Zeichnungen bekommen diese Werte. Einzelne Zeichnungen änderst du per Doppelklick oder Rechtsklick.")
-        lbl_tools.setWordWrap(True)
-        lbl_tools.setStyleSheet(f"color: {t['muted']}; font-weight: normal;")
+        mgl.addLayout(mag_layout)
+        sub_mag.setLayout(mgl)
+        t_layout.addWidget(sub_mag)
+        lbl_tools = QLabel("Neue Zeichnungen bekommen diese Werte. Einzelne Zeichnungen änderst du per Doppelklick oder Rechtsklick – "
+                           "dort kannst du auch eigene Vorlagen speichern.")
+        lbl_tools.setWordWrap(True); lbl_tools.setStyleSheet(muted)
         t_layout.addWidget(lbl_tools)
         grp_tools.setLayout(t_layout)
         layout.addWidget(grp_tools)
@@ -1858,7 +2214,7 @@ class SettingsPanel(QDialog):
         sp_size.valueChanged.connect(lambda v: self.set_matrix_style("size", v))
         mg.addWidget(sp_size, 3, 1, 1, 2)
         lbl_mx = QLabel("Einschalten oben bei „Design“ → Matrix-Regen.")
-        lbl_mx.setStyleSheet(f"color: {t['muted']}; font-weight: normal;")
+        lbl_mx.setStyleSheet(muted)
         mg.addWidget(lbl_mx, 4, 0, 1, 4)
         mg.setColumnStretch(4, 1)
         grp_mx.setLayout(mg)
@@ -1868,35 +2224,14 @@ class SettingsPanel(QDialog):
         grp_spacing = QGroupBox("Abstände anpassen (Dashboard)")
         grp_spacing.setStyleSheet(box_style)
         sp_layout = QVBoxLayout()
-
-        h1 = QHBoxLayout()
-        h1.addWidget(QLabel("1. Abstand Oben (Rand -> Oberer Kasten):"))
-        self.sp_top = QSpinBox(); self.sp_top.setRange(0, 50); self.sp_top.setValue(MARGIN_TOP)
-        self.sp_top.valueChanged.connect(self.update_spacing)
-        h1.addWidget(self.sp_top)
-        sp_layout.addLayout(h1)
-
-        h2 = QHBoxLayout()
-        h2.addWidget(QLabel("2. Abstand Oberer Kasten -> Tabelle:"))
-        self.sp_gap1 = QSpinBox(); self.sp_gap1.setRange(0, 50); self.sp_gap1.setValue(GAP_1)
-        self.sp_gap1.valueChanged.connect(self.update_spacing)
-        h2.addWidget(self.sp_gap1)
-        sp_layout.addLayout(h2)
-
-        h3 = QHBoxLayout()
-        h3.addWidget(QLabel("3. Abstand Tabelle -> Buttons:"))
-        self.sp_gap2 = QSpinBox(); self.sp_gap2.setRange(0, 50); self.sp_gap2.setValue(GAP_2)
-        self.sp_gap2.valueChanged.connect(self.update_spacing)
-        h3.addWidget(self.sp_gap2)
-        sp_layout.addLayout(h3)
-
-        h4 = QHBoxLayout()
-        h4.addWidget(QLabel("4. Abstand Unten (Kasten -> Rand):"))
-        self.sp_bot = QSpinBox(); self.sp_bot.setRange(0, 50); self.sp_bot.setValue(MARGIN_BOTTOM)
-        self.sp_bot.valueChanged.connect(self.update_spacing)
-        h4.addWidget(self.sp_bot)
-        sp_layout.addLayout(h4)
-
+        self.sp_top, self.sp_gap1, self.sp_gap2, self.sp_bot = (QSpinBox() for _ in range(4))
+        for text, sp, val in (("1. Abstand Oben (Rand -> Oberer Kasten):", self.sp_top, MARGIN_TOP),
+                              ("2. Abstand Oberer Kasten -> Tabelle:", self.sp_gap1, GAP_1),
+                              ("3. Abstand Tabelle -> Buttons:", self.sp_gap2, GAP_2),
+                              ("4. Abstand Unten (Kasten -> Rand):", self.sp_bot, MARGIN_BOTTOM)):
+            h = QHBoxLayout(); h.addWidget(QLabel(text))
+            sp.setRange(0, 50); sp.setValue(val); sp.valueChanged.connect(self.update_spacing)
+            h.addWidget(sp); sp_layout.addLayout(h)
         grp_spacing.setLayout(sp_layout)
         layout.addWidget(grp_spacing)
 
@@ -1917,8 +2252,7 @@ class SettingsPanel(QDialog):
         hk_outer.addLayout(hk_layout)
         lbl_hk = QLabel("Ins Feld klicken und die neue Taste drücken, z. B. F8 oder Strg+F9.\n"
                         "Achtung: Diese Tasten werden in allen Programmen abgefangen (auch in MT5 / TradingView).")
-        lbl_hk.setWordWrap(True)
-        lbl_hk.setStyleSheet(f"color: {t['muted']}; font-weight: normal;")
+        lbl_hk.setWordWrap(True); lbl_hk.setStyleSheet(muted)
         hk_outer.addWidget(lbl_hk)
         grp_hotkeys.setLayout(hk_outer)
         layout.addWidget(grp_hotkeys)
@@ -1928,9 +2262,8 @@ class SettingsPanel(QDialog):
         main_layout.addWidget(scroll)
         self.setLayout(main_layout)
 
-        self.cb_gtp1.currentTextChanged.connect(lambda v: self.update_r_global("GLOBAL_TP1_R", v))
-        self.cb_gtp2.currentTextChanged.connect(lambda v: self.update_r_global("GLOBAL_TP2_R", v))
-        self.cb_gtp3.currentTextChanged.connect(lambda v: self.update_r_global("GLOBAL_TP3_R", v))
+        for n, cb in enumerate(self.cb_gtp, start=1):
+            cb.currentTextChanged.connect(lambda v, n=n: self.update_r_global(n, v))
 
         # Zahlenfelder einheitlich breit - nicht winzig (Dicke) und nicht über die ganze Zeile (Abstände)
         for sb in self.findChildren(QAbstractSpinBox):
@@ -1938,6 +2271,93 @@ class SettingsPanel(QDialog):
 
         self.toggle_global_r(USE_GLOBAL_R)
 
+    # ----- kleine Bausteine -----
+    def _fib_check(self, text, key):
+        c = QCheckBox(text); c.setChecked(FIB_STYLE[key])
+        c.toggled.connect(lambda v, k=key: self.set_fib(k, v))
+        return c
+
+    def _fib_combo(self, key, items):
+        cb = QComboBox()
+        for text, val in items: cb.addItem(text, val)
+        cb.setCurrentIndex(max(0, cb.findData(FIB_STYLE[key])))
+        cb.currentIndexChanged.connect(lambda i, k=key, c=cb: self.set_fib(k, c.itemData(i)))
+        return cb
+
+    def _fib_color(self, key):
+        b = QPushButton(); b.setFixedSize(24, 24); b.setStyleSheet(color_btn_css(FIB_STYLE[key]))
+        b.clicked.connect(lambda checked, k=key, btn=b: self.pick_fib_color(k, btn))
+        return b
+
+    def _fib_spin(self, key, lo, hi):
+        sp = QSpinBox(); sp.setRange(lo, hi); sp.setValue(FIB_STYLE[key])
+        sp.valueChanged.connect(lambda v, k=key: self.set_fib(k, v))
+        return sp
+
+    def _tool_color(self, kind, key):
+        b = QPushButton(); b.setFixedSize(24, 24); b.setStyleSheet(color_btn_css(TOOL_STYLES[kind][key]))
+        b.clicked.connect(lambda checked, k=kind, kk=key, btn=b: self.pick_tool_key(k, kk, btn))
+        return b
+
+    def _tool_spin(self, kind, key, lo, hi):
+        sp = QSpinBox(); sp.setRange(lo, hi); sp.setValue(TOOL_STYLES[kind][key])
+        sp.valueChanged.connect(lambda v, k=kind, kk=key: self.set_tool(k, kk, v))
+        return sp
+
+    def _tool_combo(self, kind, key, items):
+        cb = QComboBox()
+        for text, val in items: cb.addItem(text, val)
+        cb.setCurrentIndex(max(0, cb.findData(TOOL_STYLES[kind][key])))
+        cb.currentIndexChanged.connect(lambda i, k=kind, kk=key, c=cb: self.set_tool(k, kk, c.itemData(i)))
+        return cb
+
+    def _tool_check(self, kind, key, text):
+        c = QCheckBox(text); c.setChecked(TOOL_STYLES[kind][key])
+        c.toggled.connect(lambda v, k=kind, kk=key: self.set_tool(k, kk, v))
+        return c
+
+    # ----- Speicherplätze / Presets -----
+    def _rename_slot(self, i, name):
+        self.slots[i]["name"] = name.strip()
+        save_slots(self.slots)
+
+    def _save_slot(self, i):
+        name = self.slot_names[i].text().strip() or f"Speicherplatz {i + 1}"
+        if self.slots[i].get("data") and QMessageBox.question(
+                self, "Speicherplatz", f"„{name}“ mit den aktuellen Einstellungen überschreiben?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes) != QMessageBox.Yes: return
+        self.slots[i] = {"name": name, "saved": datetime.datetime.now().strftime("%d.%m. %H:%M"), "data": settings_to_dict(self.ov)}
+        self.slot_names[i].setText(name); self.slot_info[i].setText(self.slots[i]["saved"])
+        save_slots(self.slots)
+
+    def _load_slot(self, i):
+        data = self.slots[i].get("data")
+        if not data:
+            QMessageBox.information(self, "Speicherplatz", "Dieser Speicherplatz ist noch leer."); return
+        self.main_panel.apply_all(data)
+
+    def save_preset(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Set-Datei speichern", os.path.join(PRESET_DIR, "Mein Setup.set"),
+                                              "Fib-Preset (*.set)")
+        if not path: return
+        if not path.lower().endswith(".set"): path += ".set"
+        try: write_json(path, settings_to_dict(self.ov))
+        except OSError as ex: QMessageBox.warning(self, "Preset", f"Speichern fehlgeschlagen:\n{ex}")
+
+    def load_preset(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Set-Datei laden", PRESET_DIR, "Fib-Preset (*.set);;Alle Dateien (*)")
+        if not path: return
+        try: self.main_panel.apply_all(read_json(path))
+        except Exception as ex: QMessageBox.warning(self, "Preset", f"Die Datei konnte nicht geladen werden:\n{ex}")
+
+    def reset_defaults(self):
+        reply = QMessageBox.question(self, "Standardwerte",
+                                     "Alle Einstellungen auf die Standardwerte zurücksetzen?\n\n"
+                                     "Deine Speicherplätze, Set-Dateien und Vorlagen bleiben erhalten.",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes: self.main_panel.apply_all(DEFAULTS)
+
+    # ----- Einstellungen übernehmen -----
     def set_tool(self, kind, key, val):
         TOOL_STYLES[kind][key] = val
         self.ov.settings_changed()
@@ -1971,33 +2391,19 @@ class SettingsPanel(QDialog):
             MATRIX_STYLE[key] = color; btn.setStyleSheet(color_btn_css(color))
             self.main_panel.update(); self.ov.settings_changed()
 
-    def save_preset(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Preset speichern", os.path.join(PRESET_DIR, "Mein Setup.set"),
-                                              "Fib-Preset (*.set)")
-        if not path: return
-        if not path.lower().endswith(".set"): path += ".set"
-        try: write_json(path, settings_to_dict(self.ov))
-        except OSError as ex: QMessageBox.warning(self, "Preset", f"Speichern fehlgeschlagen:\n{ex}")
+    def set_num_keep(self, on):
+        global NUM_KEEP
+        NUM_KEEP = on
+        self.ov.objects_changed(); self.ov.settings_changed()
 
-    def load_preset(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Preset laden", PRESET_DIR, "Fib-Preset (*.set);;Alle Dateien (*)")
-        if not path: return
-        try: self.main_panel.apply_all(read_json(path))
-        except Exception as ex: QMessageBox.warning(self, "Preset", f"Die Datei konnte nicht geladen werden:\n{ex}")
-
-    def reset_defaults(self):
-        reply = QMessageBox.question(self, "Standard wiederherstellen",
-                                     "Alle Einstellungen auf den Auslieferungszustand zurücksetzen?",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if reply == QMessageBox.Yes: self.main_panel.apply_all(DEFAULTS)
+    def set_magnet_drawings(self, on):
+        global MAGNET_DRAWINGS
+        MAGNET_DRAWINGS = on
+        self.ov.settings_changed()
 
     def update_spacing(self):
         global MARGIN_TOP, MARGIN_BOTTOM, GAP_1, GAP_2
-        MARGIN_TOP = self.sp_top.value()
-        GAP_1 = self.sp_gap1.value()
-        GAP_2 = self.sp_gap2.value()
-        MARGIN_BOTTOM = self.sp_bot.value()
-
+        MARGIN_TOP, GAP_1, GAP_2, MARGIN_BOTTOM = (sp.value() for sp in (self.sp_top, self.sp_gap1, self.sp_gap2, self.sp_bot))
         self.main_panel.apply_spacing()
         self.ov.settings_changed()
 
@@ -2013,50 +2419,47 @@ class SettingsPanel(QDialog):
         self.main_panel.fit_to_content()
         self.ov.settings_changed()
 
+    def _show_r_values(self):
+        # bei globalen R-Werten zeigt die (ausgegraute) R-Spalte die globalen Werte, sonst die eigenen des Setups
+        glob = (GLOBAL_TP1_R, GLOBAL_TP2_R, GLOBAL_TP3_R)
+        for n in range(3):
+            for i, cb in enumerate(self.cb_stp[n]):
+                cb.blockSignals(True)
+                cb.setCurrentText(fmt_num(glob[n] if USE_GLOBAL_R else SETUPS[i][f"r_tp{n + 1}"]))
+                cb.setEnabled(not USE_GLOBAL_R)
+                cb.blockSignals(False)
+        self.lbl_global_hint.setVisible(USE_GLOBAL_R)
+
     def toggle_global_r(self, state):
         global USE_GLOBAL_R
         USE_GLOBAL_R = bool(state)
-        self.cb_gtp1.setEnabled(USE_GLOBAL_R)
-        self.cb_gtp2.setEnabled(USE_GLOBAL_R)
-        self.cb_gtp3.setEnabled(USE_GLOBAL_R)
-
+        for cb in self.cb_gtp: cb.setEnabled(USE_GLOBAL_R)
         for i in range(len(SETUPS)):
-            self.cb_stp1[i].setEnabled(not USE_GLOBAL_R)
-            self.cb_stp2[i].setEnabled(not USE_GLOBAL_R)
-            self.cb_stp3[i].setEnabled(not USE_GLOBAL_R)
             recalc_setup(SETUPS[i])
             self.update_spinboxes(i)
-
+        self._show_r_values()
         self.ov.settings_changed()
         self.main_panel.update_table()
 
-    def update_r_global(self, var_name, val):
+    def update_r_global(self, n, val):
         global GLOBAL_TP1_R, GLOBAL_TP2_R, GLOBAL_TP3_R
-        if not val or str(val).strip() == "": return
-        try:
-            v = float(str(val).replace(",", "."))
-        except ValueError:
-            return
-
-        if var_name == "GLOBAL_TP1_R": GLOBAL_TP1_R = v
-        elif var_name == "GLOBAL_TP2_R": GLOBAL_TP2_R = v
-        elif var_name == "GLOBAL_TP3_R": GLOBAL_TP3_R = v
-
-        # Die R-Werte der einzelnen Setups bleiben unangetastet - die gelten wieder,
-        # sobald "Globale R-Werte" ausgeschaltet wird
+        try: v = float(str(val).replace(",", "."))
+        except ValueError: return
+        if n == 1: GLOBAL_TP1_R = v
+        elif n == 2: GLOBAL_TP2_R = v
+        else: GLOBAL_TP3_R = v
+        # Die eigenen R-Werte der Setups bleiben gespeichert - sie gelten wieder, sobald "Global" aus ist
         if USE_GLOBAL_R:
             for i in range(len(SETUPS)):
                 recalc_setup(SETUPS[i])
                 self.update_spinboxes(i)
+            self._show_r_values()
             self.main_panel.update_table()
         self.ov.settings_changed()
 
     def update_r_setup(self, idx, key, val):
-        if not val or str(val).strip() == "": return
-        try:
-            v = float(str(val).replace(",", "."))
-        except ValueError:
-            return
+        try: v = float(str(val).replace(",", "."))
+        except ValueError: return
         SETUPS[idx][key] = v
         if not USE_GLOBAL_R:
             recalc_setup(SETUPS[idx])
@@ -2103,17 +2506,6 @@ class SettingsPanel(QDialog):
             self.color_btns[key][idx].setStyleSheet(color_btn_css(color))
             self.ov.settings_changed()
 
-    def pick_tool_color(self, kind):
-        color = QColorDialog.getColor(TOOL_STYLES[kind]["color"], self, "Farbe wählen")
-        if color.isValid():
-            TOOL_STYLES[kind]["color"] = color
-            self.tool_color_btns[kind].setStyleSheet(color_btn_css(color))
-            self.ov.settings_changed()
-
-    def update_tool_width(self, kind, val):
-        TOOL_STYLES[kind]["width"] = val
-        self.ov.settings_changed()
-
     def update_magnet_mode(self, idx):
         global MAGNET_MODE
         MAGNET_MODE = self.cb_magnet_mode.itemData(idx)
@@ -2149,48 +2541,21 @@ class SettingsPanel(QDialog):
         self.ov.settings_changed()
 
     def set_theme(self, name):
-        global THEME
-        THEME = name
-        self.main_panel.apply_theme()
-        self.ov.settings_changed()
-        QTimer.singleShot(0, self.main_panel.rebuild_settings_panel)  # Einstellungsfenster in den neuen Farben neu aufbauen
+        self.main_panel.set_theme(name)
 
     def set_fib(self, key, val):
         FIB_STYLE[key] = val
         self.ov.settings_changed()
 
-    def _add_extra_row(self, lv):
-        row = QWidget(); h = QHBoxLayout(row); h.setContentsMargins(0, 0, 0, 0)
-        cb = QCheckBox(); cb.setChecked(lv["on"]); cb.toggled.connect(lambda v, lv=lv: self._set_extra(lv, "on", v))
-        sp = QDoubleSpinBox(); sp.setRange(-10, 10); sp.setDecimals(3); sp.setSingleStep(0.01); sp.setFixedWidth(90)
-        sp.setValue(lv["value"]); sp.valueChanged.connect(lambda v, lv=lv: self._set_extra(lv, "value", v))
-        col = QPushButton(); col.setFixedSize(24, 24); col.setStyleSheet(color_btn_css(lv["color"]))
-        col.clicked.connect(lambda checked, lv=lv, b=col: self._pick_extra_color(lv, b))
-        rm = QPushButton("✕"); rm.setFixedSize(24, 24); rm.setToolTip("Level entfernen")
-        rm.clicked.connect(lambda checked, lv=lv, w=row: self._remove_extra(lv, w))
-        for wdg in (cb, sp, col, rm): h.addWidget(wdg)
-        h.addStretch()
-        self.extra_layout.addWidget(row)
-
-    def add_extra_level(self):
-        lv = {"value": 0.786, "color": QColor("#00bcd4"), "on": True}
-        FIB_EXTRA.append(lv); self._add_extra_row(lv)
-        self.ov.settings_changed()
-
-    def _set_extra(self, lv, key, val):
+    def _set_level(self, lv, key, val):
         lv[key] = val
         self.ov.settings_changed()
 
-    def _pick_extra_color(self, lv, btn):
+    def _pick_level_color(self, lv, btn):
         color = QColorDialog.getColor(lv["color"], self, "Farbe wählen")
         if color.isValid():
             lv["color"] = color; btn.setStyleSheet(color_btn_css(color))
             self.ov.settings_changed()
-
-    def _remove_extra(self, lv, row):
-        FIB_EXTRA[:] = [x for x in FIB_EXTRA if x is not lv]
-        row.deleteLater()
-        self.ov.settings_changed()
 
     def pick_fib_color(self, key, btn):
         color = QColorDialog.getColor(FIB_STYLE[key], self, "Farbe wählen", QColorDialog.ShowAlphaChannel)
@@ -2204,10 +2569,10 @@ class SettingsPanel(QDialog):
 
     def apply_tv_look(self):
         reply = QMessageBox.question(self, "TradingView-Look",
-            "Farben und sichtbare Linien wie dein TradingView-Fib einstellen?\n\n"
-            "Entry und SL aller Setups an, BE und TP aus.\n"
-            "0,5 weiß · 0,559 grün · 0,618 gelb · 0,677 türkis · 0,736 rot.\n\n"
-            "Tipp: Deine jetzigen Einstellungen kannst du vorher mit „Speichern unter …“ sichern.",
+            "Fib wie dein TradingView-Fib einstellen?\n\n"
+            "Level-Liste wie bei TradingView: 0 · 0,5 · 0,559 · 0,618 · 0,677 · 0,736 · 1 an.\n"
+            "Setups: Entry und SL an, BE und TP aus.\n\n"
+            "Tipp: Deine jetzigen Einstellungen kannst du vorher in einem Speicherplatz sichern.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
         if reply != QMessageBox.Yes: return
         data = settings_to_dict(self.ov)
@@ -2218,11 +2583,11 @@ class SettingsPanel(QDialog):
                       "thick_e": 1, "thick_sl": 1, "style_e": "Solid", "style_sl": "Solid"})
             for k in ("be", "tp1", "tp2", "tp3"): s[f"show_{k}"] = False
         data["fib_style"].update({"trend": True, "trend_color": "#c8ffffff", "trend_style": "Dash", "trend_width": 1,
-                                  "extend": "none", "background": True, "bg_opacity": 25, "reverse": False,
-                                  "prices": True, "level_fmt": "value", "label_h": "center", "label_v": "middle",
-                                  "font_size": 10, "label_box": False, "one_color": False,
-                                  "show_0": True, "color_0": "#ffffffff", "show_1": True, "color_1": "#ffffffff"})
-        data["fib_extra"] = [dict(d, on=False) for d in data["fib_extra"]]
+                                  "level_width": 1, "level_style": "Solid", "extend": "none", "background": True,
+                                  "bg_opacity": 25, "reverse": False, "prices": True, "level_fmt": "value",
+                                  "label_h": "center", "label_v": "middle", "font_size": 10, "label_box": False,
+                                  "one_color": False})
+        data["fib_levels"] = default_fib_levels_json()
         self.main_panel.apply_all(data)
 
 
@@ -2325,7 +2690,7 @@ class ControlPanel(QDialog):
         self.rain = MatrixRain(self)
 
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Window)
-        self.setWindowTitle("Fib Overlay Steuerung")
+        self.setWindowTitle(f"Fib Overlay Steuerung – Version {APP_VERSION}")
         self.move(20, 20)
 
         self.main_layout = QVBoxLayout()
@@ -2391,12 +2756,21 @@ class ControlPanel(QDialog):
         self.btn_hide.clicked.connect(self.ov.set_hidden)
         btn_layout.addWidget(self.btn_hide)
 
+        # Design-Umschalter: Linksklick = nächstes Design, Rechtsklick = voriges
+        self.btn_design = QPushButton(); self.btn_design.setObjectName("gear"); self.btn_design.setIconSize(QSize(16, 16))
+        self.btn_design.setFixedSize(24, 24)
+        self.btn_design.setToolTip("Design wechseln (Linksklick = nächstes, Rechtsklick = voriges)")
+        self.btn_design.clicked.connect(lambda: self.cycle_theme(1))
+        self.btn_design.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.btn_design.customContextMenuRequested.connect(lambda _: self.cycle_theme(-1))
+        btn_layout.addWidget(self.btn_design)  # direkt links neben dem Zahnrad
+
         self.btn_settings = btn_settings = QPushButton()
         btn_settings.setObjectName("gear"); btn_settings.setIconSize(QSize(16, 16))
         btn_settings.setToolTip("Einstellungen")
         btn_settings.setFixedSize(24, 24)
         btn_settings.clicked.connect(self.open_settings)
-        btn_layout.addWidget(btn_settings, alignment=Qt.AlignRight)
+        btn_layout.addWidget(btn_settings)
 
         self.top_layout.addLayout(btn_layout)
         self.main_layout.addWidget(self.top_group)
@@ -2454,6 +2828,11 @@ class ControlPanel(QDialog):
         self.btn_magnet.setToolTip("Magnet: Punkte rasten an Hoch / Tief der Kerze ein")
         self.btn_magnet.clicked.connect(self.set_magnet)
         tools_row.addWidget(self.btn_magnet)
+        self.btn_objects = QPushButton(); self.btn_objects.setObjectName("tool"); self.btn_objects.setIconSize(QSize(18, 18))
+        self.btn_objects.setFixedHeight(28); self.btn_objects.setToolTip("Objektliste: alle Fibs und Zeichnungen")
+        self.btn_objects.clicked.connect(lambda: self.ov.open_object_list())
+        self.tool_btns["list"] = self.btn_objects
+        tools_row.addWidget(self.btn_objects)
         btn_group_layout.addLayout(tools_row)
 
         btn_spawn = QPushButton("Sofort-Fib (Drag && Drop)")  # && = ein "&" (einzelnes & macht Qt zum Tastenkürzel)
@@ -2507,6 +2886,7 @@ class ControlPanel(QDialog):
         self.setStyleSheet(panel_css(t))
         self.rain.set_running(MATRIX_ON)
         self.btn_settings.setIcon(gear_icon(t["icon"]))
+        self.btn_design.setIcon(tool_icon("palette", t["icon"]))
         for kind, b in self.tool_btns.items():
             icon = tool_icon(kind, t["icon"])
             # eingeschaltet (z. B. Magnet an): Symbol in der Schriftfarbe des aktiven Knopfs, sonst Gold auf Gold
@@ -2514,6 +2894,21 @@ class ControlPanel(QDialog):
             b.setIcon(icon)
         # neu messen, sobald das Design angewendet ist (Schrift und Kästchen können sich ändern)
         QTimer.singleShot(0, lambda: (self.table.update_natural_widths(), self.fit_to_content()))
+
+    def set_theme(self, name):
+        global THEME
+        THEME = name
+        self.apply_theme()
+        self.ov.settings_changed()
+        QTimer.singleShot(0, self.rebuild_settings_panel)  # Einstellungsfenster in den neuen Farben neu aufbauen
+        for dlg in (self.ov.list_dialog, self.ov._dialog):
+            if dlg: dlg.setStyleSheet(themed_dialog_css())
+
+    def cycle_theme(self, step):
+        names = list(THEMES)
+        name = names[(names.index(THEME) + step) % len(names)]
+        self.set_theme(name)
+        QToolTip.showText(self.btn_design.mapToGlobal(QPoint(0, self.btn_design.height() + 4)), f"Design: {name}", self.btn_design)
 
     def fit_to_content(self):
         """Höhe an den Inhalt anpassen. Die Breite bleibt, wie du sie gezogen hast."""
