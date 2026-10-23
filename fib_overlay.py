@@ -72,7 +72,7 @@ MARGIN_BOTTOM = 18
 MAGNET_DRAWINGS = True  # Magnet auch für Linien und Rechtecke, nicht nur für die Fib
 NUM_KEEP = True         # Objekt-Nummern behalten (Rechteck 3 bleibt Rechteck 3)
 AUTO_MODE = False       # Automatik (Test): Setups weiterschalten, wenn der Kurs durch den SL läuft
-APP_VERSION = "4"
+APP_VERSION = "5"
 
 DEFAULTS = None  # Werkseinstellungen, wird in main() gefüllt
 
@@ -156,6 +156,10 @@ FIB_STYLE = {
     "one_color": False, "one_color_value": QColor("#2962ff"),
     "level_width": 1, "level_style": "Solid",            # "Levels-Linie" wie bei TradingView: gilt für die Level-Liste
     "num_fmt": "de",             # "de" = 0,5 (81.751,0) / "en" = 0.5 (81751.0)
+    # Was die Fib zeigt - entweder oder, damit nichts doppelt auf einer Linie steht:
+    # "setups" = Linien der Setups 1-4 (einzeln an/aus) / "levels" = Level-Liste wie bei TradingView
+    "source": "setups",
+    "frame_01": True,            # bei "setups": 0 und 1 als Rahmen dazu
 }
 # Level-Liste 1:1 wie bei TradingView: 24 Plätze (Haken, Wert, Farbe), Reihenfolge = 2 Spalten zeilenweise
 _TV_LEVELS = [(-0.382, "#a19c3a", 0), (-0.272, "#3d7a42", 0), (0.0, "#ffeb3b", 1), (0.028, "#8b2e3a", 0),
@@ -467,6 +471,7 @@ def indicator_css(t):
         QCheckBox::indicator:checked, QTableWidget::indicator:checked {{ background-color: {t['highlight']};
                                                                         border: 1px solid {t['highlight']}; image: url({check}); }}
         QCheckBox::indicator:hover, QTableWidget::indicator:hover {{ border: 1px solid {t['title']}; }}
+        QTableWidget::indicator:checked:disabled {{ background-color: {t['grid']}; border: 1px solid {t['grid']}; }}
     """
 
 def mix(c1, c2, f):
@@ -524,6 +529,9 @@ def settings_css(t):
             f"QPushButton {{ background-color: {t['btn']}; color: {t['text']}; border: 1px solid {t['btn_border']};"
             f" border-radius: 4px; padding: 5px 10px; }}"
             f"QPushButton:hover {{ background-color: {t['btn_hover']}; border: 1px solid {focus}; }}"
+            f"QPushButton:checked {{ background-color: {t['on']}; color: {t['on_text']}; border: 1px solid {t['on_border']};"
+            f" font-weight: bold; }}"
+            f"QCheckBox[dim=\"true\"] {{ color: {t['muted']}; }}"
             f"QLabel#muted {{ color: {t['muted']}; font-weight: normal; }}"
             f"QLabel#hint {{ color: {focus}; font-weight: normal; }}"
             f"QDoubleSpinBox#readonly {{ background-color: {mix(t['bg'], '#ffffff', 0.12)}; color: {t['muted']}; }}"
@@ -574,6 +582,16 @@ def recalc_setup(s):
     s["tp1"] = s["entry"] - r1 * s["r"]
     s["tp2"] = s["entry"] - r2 * s["r"]
     s["tp3"] = s["entry"] - r3 * s["r"]
+
+def set_setup_flag(s, key, on):
+    """Häkchen eines Setups setzen. "active" ist der Hauptschalter: Die Linien-Häkchen bleiben, wie du sie gesetzt hast,
+    und lassen sich auch bei ausgeschaltetem Setup vorbereiten. Ist beim Einschalten keine Linie an, kommen alle."""
+    if key == "active":
+        s["active"] = on
+        if on and not any(s[f"show_{k}"] for k in LINE_KEYS):
+            for k in LINE_KEYS: s[f"show_{k}"] = True
+    else:
+        s[f"show_{key}"] = on
 
 for s in SETUPS: recalc_setup(s)
 
@@ -1266,23 +1284,31 @@ class FibOverlay(QWidget):
         return x0, x1, lambda f: ya + (yb - ya) * f
 
     def _fib_levels(self):
-        """Sichtbare Level, sortiert: erst die Level-Liste (wie TradingView), dazu die Linien der Setups.
-        Gleiche Werte werden eine Linie mit allen Namen, z. B. 0,559 · SL1 · E2."""
+        """Sichtbare Level, sortiert - entweder die Level-Liste (wie TradingView) oder die Linien der Setups.
+        Bei den Setups werden gleiche Werte eine Linie mit allen Namen, z. B. 0,559 · SL1 · E2."""
         groups = {}
-        def add(frac, color, thick, style, name, fill=True, fill_color=None):
+        def add(frac, color, thick, style, name, fill=True, fill_color=None, edge=False):
             g = groups.setdefault(round(frac, 6), {"frac": frac, "color": color, "thick": thick, "style": style, "names": [],
-                                                   "fill": fill, "fill_color": fill_color or color})
+                                                   "fill": fill, "fill_color": fill_color or color, "edge": edge})
             if name: g["names"].append(name)
-        for lv in FIB_LEVELS:
-            if lv["on"]: add(lv["value"], lv["color"], FIB_STYLE["level_width"], FIB_STYLE["level_style"], None,
-                             lv.get("fill", True), lv.get("fill_color"))
+        if FIB_STYLE["source"] == "levels":
+            for lv in FIB_LEVELS:
+                if lv["on"]: add(lv["value"], lv["color"], FIB_STYLE["level_width"], FIB_STYLE["level_style"], None,
+                                 lv.get("fill", True), lv.get("fill_color"))
+            return sorted(groups.values(), key=lambda g: g["frac"])
+        if FIB_STYLE["frame_01"]:
+            # 0 und 1 als Rahmen (Farbe aus der Level-Liste) - ohne Fläche bis zur ersten bzw. nach der letzten Setup-Linie
+            for v, fallback in ((0.0, "#ffeb3b"), (1.0, "#f23645")):
+                lv = next((l for l in FIB_LEVELS if abs(l["value"] - v) < 1e-9), None)
+                add(v, QColor(lv["color"] if lv else fallback), FIB_STYLE["level_width"], FIB_STYLE["level_style"], None,
+                    False, edge=True)
         for s in SETUPS:
             if not s["active"]: continue
             n = s["n"]
             for k, frac, label in (("e", s["entry"], f"E{n}"), ("sl", s["sl"], f"SL{n}"), ("be", s["be"], f"BE{n}"),
                                    ("tp1", s["tp1"], f"TP1_{n}"), ("tp2", s["tp2"], f"TP2_{n}"), ("tp3", s["tp3"], f"TP3_{n}")):
-                # Setup-Linien selbst machen keine Fläche - die Flächen stellst du in der Level-Liste ein
-                if s[f"show_{k}"]: add(frac, s[f"color_{k}"], s[f"thick_{k}"], s[f"style_{k}"], label, False)
+                # Entry ohne Fläche davor - wie 0,5 in der TradingView-Liste; SL, BE und TP füllen bis zur Linie davor
+                if s[f"show_{k}"]: add(frac, s[f"color_{k}"], s[f"thick_{k}"], s[f"style_{k}"], label, k != "e")
         return sorted(groups.values(), key=lambda g: g["frac"])
 
     def _level_text(self, lv, f):
@@ -1487,10 +1513,7 @@ class FibOverlay(QWidget):
 
     def _auto_set(self, f, idx, announce=True):
         f["auto_idx"] = idx
-        for i, s in enumerate(SETUPS):
-            s["active"] = i == idx
-            if i == idx:
-                for k in LINE_KEYS: s[f"show_{k}"] = True
+        for i, s in enumerate(SETUPS): set_setup_flag(s, "active", i == idx)  # Linien-Häkchen bleiben, wie du sie gesetzt hast
         if self.main_panel: self.main_panel.update_table()
         if announce:
             s = SETUPS[idx]
@@ -1946,7 +1969,7 @@ class FibOverlay(QWidget):
             # Fläche zwischen zwei Leveln gehört zum weiter entfernten Level (wie TradingView) -
             # dort ist sie einzeln ein-/ausschaltbar und hat eine eigene Flächenfarbe
             for lo, hi in zip(levels, levels[1:]):
-                if not hi.get("fill", True): continue
+                if not hi.get("fill", True) or lo.get("edge"): continue
                 c = QColor(one or hi.get("fill_color") or hi["color"]); c.setAlpha(int(FIB_STYLE["bg_opacity"] * 2.55))
                 ya, yb = y_of(lo["frac"]), y_of(hi["frac"])
                 p.fillRect(QRectF(x0, min(ya, yb), x1 - x0, abs(yb - ya)), c)
@@ -2293,6 +2316,22 @@ class SettingsPanel(QDialog):
         self.grp_fib = grp_fib = QGroupBox("Fib-Darstellung (wie TradingView)")
         fg = QGridLayout()
         r = 0
+        # entweder Setups oder Level-Liste - beides zusammen stünde doppelt auf einer Linie (z. B. 0,5 · E1)
+        fg.addWidget(QLabel("<b>Die Fib zeigt</b>"), r, 0)
+        src_row = QHBoxLayout()
+        self.src_btns = {}
+        for key, text in (("setups", "Setups 1–4"), ("levels", "TradingView-Liste")):
+            b = QPushButton(text); b.setCheckable(True); b.setMinimumWidth(160)
+            b.clicked.connect(lambda checked, k=key: self.main_panel.set_fib_source(k))
+            src_row.addWidget(b); self.src_btns[key] = b
+        fg.addLayout(src_row, r, 1, 1, 3)
+        r += 1
+        self.lbl_src_fib = QLabel(); self.lbl_src_fib.setWordWrap(True); self.lbl_src_fib.setObjectName("hint")
+        fg.addWidget(self.lbl_src_fib, r, 0, 1, 4)
+        r += 1
+        self.cb_frame01 = self._fib_check("0 und 1 als Rahmen dazu (nur bei Setups)", "frame_01")
+        fg.addWidget(self.cb_frame01, r, 0, 1, 4)
+        r += 1
         fg.addWidget(self._fib_check("Trendlinie (Diagonale)", "trend"), r, 0)
         fg.addWidget(self._fib_color("trend_color"), r, 1); fg.addWidget(self._fib_spin("trend_width", 1, 6), r, 2)
         fg.addWidget(self._fib_combo("trend_style", self.LINE_STYLES), r, 3)
@@ -2407,7 +2446,8 @@ class SettingsPanel(QDialog):
         cb_auto.toggled.connect(self.set_auto)
         eg.addWidget(cb_auto, 8, 0, 1, 4)
         lbl_auto = QLabel("Läuft der Kurs durch den SL des aktiven Setups, wird das nächste Setup gezeigt (1 → 2 → 3 → 4, nur vorwärts). "
-                          "Eine neue Fib fängt wieder bei Setup 1 an. Nutzt dieselbe Kerzen-Erkennung wie der Alarm.")
+                          "Eine neue Fib fängt wieder bei Setup 1 an. Nutzt dieselbe Kerzen-Erkennung wie der Alarm. "
+                          "Zu sehen ist das nur, wenn die Fib die Setups zeigt.")
         lbl_auto.setWordWrap(True); lbl_auto.setObjectName("muted")
         eg.addWidget(lbl_auto, 9, 0, 1, 4)
         eg.setColumnStretch(4, 1)
@@ -2431,6 +2471,16 @@ class SettingsPanel(QDialog):
         grp_trade = QGroupBox("Handels-Setups")
         trade_layout = QVBoxLayout()
         trade_layout.setSpacing(10)
+
+        # Hinweis, solange die Fib die Level-Liste zeigt - dann wirken die Setup-Häkchen nicht
+        self.src_setups_box = QWidget()
+        sb_lay = QHBoxLayout(self.src_setups_box); sb_lay.setContentsMargins(0, 0, 0, 0)
+        lbl_src = QLabel("⚠ Die Fib zeigt gerade die Level-Liste wie TradingView – die Setups werden nicht gezeichnet. "
+                         "Deine Häkchen hier kannst du trotzdem schon setzen.")
+        lbl_src.setWordWrap(True); lbl_src.setObjectName("hint")
+        btn_src = QPushButton("Auf Setups umschalten"); btn_src.clicked.connect(lambda: self.main_panel.set_fib_source("setups"))
+        sb_lay.addWidget(lbl_src, 1); sb_lay.addWidget(btn_src)
+        trade_layout.addWidget(self.src_setups_box)
 
         grp_global = QGroupBox("Globale R-Werte")
         g_layout = QVBoxLayout()
@@ -2464,7 +2514,7 @@ class SettingsPanel(QDialog):
         for i, s in enumerate(SETUPS):
             grp = QGroupBox(f"Setup {s['n']}")
             grid = QGridLayout()
-            cb_on = QCheckBox(f"Setup {s['n']} anzeigen  (an/aus – wie das Häkchen im Dashboard)")
+            cb_on = QCheckBox(f"Setup {s['n']} anzeigen  (Hauptschalter – die Linien-Häkchen darunter bleiben, wie du sie setzt)")
             cb_on.setChecked(s["active"])
             cb_on.toggled.connect(lambda on, idx=i: self.set_setup_show(idx, "active", on))
             self.cb_active.append(cb_on)
@@ -2704,6 +2754,8 @@ class SettingsPanel(QDialog):
             sb.setMinimumWidth(max(sb.minimumWidth(), 72)); sb.setMaximumWidth(140)
 
         self.toggle_global_r(USE_GLOBAL_R)
+        self.sync_setup_checks()
+        self.sync_source()
 
     # ----- kleine Bausteine -----
     def _fib_check(self, text, key):
@@ -2934,14 +2986,8 @@ class SettingsPanel(QDialog):
         self.ov.settings_changed()
 
     def set_setup_show(self, idx, key, on):
-        # Setup bzw. einzelne Linie an/aus – genau wie die Häkchen im Dashboard
-        s = SETUPS[idx]
-        if key == "active":
-            s["active"] = on
-            for k in LINE_KEYS: s[f"show_{k}"] = on
-        else:
-            s[f"show_{key}"] = on
-            if on and not s["active"]: s["active"] = True  # Linie an -> Setup wieder an
+        # Setup (Hauptschalter) bzw. einzelne Linie an/aus – genau wie die Häkchen im Dashboard
+        set_setup_flag(SETUPS[idx], key, on)
         self.main_panel.update_table()  # zieht auch die Häkchen hier im Fenster nach
         self.ov.settings_changed()
 
@@ -2951,6 +2997,22 @@ class SettingsPanel(QDialog):
             for cb, val in [(self.cb_active[i], s["active"])] + [(self.cb_line[k][i], s[f"show_{k}"]) for k in LINE_KEYS]:
                 if cb.isChecked() != bool(val):
                     cb.blockSignals(True); cb.setChecked(bool(val)); cb.blockSignals(False)
+            for k in LINE_KEYS:  # Linien eines ausgeschalteten Setups grau - anklickbar bleiben sie
+                cb = self.cb_line[k][i]
+                if cb.property("dim") != (not s["active"]):
+                    cb.setProperty("dim", not s["active"]); cb.style().unpolish(cb); cb.style().polish(cb)
+
+    def sync_source(self):
+        # Umschalter Setups / Level-Liste und die Hinweise dazu
+        if not hasattr(self, "src_setups_box"): return
+        src = FIB_STYLE["source"]
+        for k, b in self.src_btns.items(): b.setChecked(k == src)
+        self.lbl_src_fib.setText("Gerade: die Linien der Setups 1–4 (unten bei „Handels-Setups“ bzw. in der Tabelle im Dashboard). "
+                                 "Die Level-Liste weiter unten ist aus – nur die Farben von 0 und 1 gelten für den Rahmen."
+                                 if src == "setups" else
+                                 "Gerade: die Level-Liste weiter unten, wie bei TradingView. Die Setups werden nicht gezeichnet.")
+        self.cb_frame01.setVisible(src == "setups")
+        self.src_setups_box.setVisible(src == "levels")
 
     def pick_color(self, idx, key):
         color = QColorDialog.getColor(SETUPS[idx][f"color_{key}"], self, "Farbe wählen")
@@ -3041,23 +3103,18 @@ class SettingsPanel(QDialog):
     def apply_tv_look(self):
         reply = QMessageBox.question(self, "TradingView-Look",
             "Fib wie dein TradingView-Fib einstellen?\n\n"
-            "Level-Liste wie bei TradingView: 0 · 0,5 · 0,559 · 0,618 · 0,677 · 0,736 · 1 an.\n"
-            "Setups: Entry und SL an, BE und TP aus.\n\n"
+            "Die Fib zeigt dann die Level-Liste wie bei TradingView: 0 · 0,5 · 0,559 · 0,618 · 0,677 · 0,736 · 1.\n"
+            "Die Setups werden dabei nicht gezeichnet – so steht nichts doppelt auf einer Linie.\n"
+            "Zurück zu den Setups: Knopf „Setups“ im Dashboard. Deine Setup-Häkchen bleiben, wie sie sind.\n\n"
             "Tipp: Deine jetzigen Einstellungen kannst du vorher in einem Speicherplatz sichern.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
         if reply != QMessageBox.Yes: return
         data = settings_to_dict(self.ov)
-        # Entry von Setup n und SL von Setup n-1 liegen auf demselben Level -> gleiche Farbe
-        colors = ["#ffffff", "#4caf50", "#ffeb3b", "#00bcd4", "#f23645"]
-        for i, s in enumerate(data["setups"]):
-            s.update({"active": True, "color_e": colors[i], "color_sl": colors[i + 1], "show_e": True, "show_sl": True,
-                      "thick_e": 1, "thick_sl": 1, "style_e": "Solid", "style_sl": "Solid"})
-            for k in ("be", "tp1", "tp2", "tp3"): s[f"show_{k}"] = False
         data["fib_style"].update({"trend": True, "trend_color": "#c8ffffff", "trend_style": "Dash", "trend_width": 1,
                                   "level_width": 1, "level_style": "Solid", "extend": "none", "background": True,
                                   "bg_opacity": 25, "reverse": False, "prices": True, "level_fmt": "value",
                                   "label_h": "center", "label_v": "middle", "font_size": 10, "label_box": False,
-                                  "one_color": False})
+                                  "one_color": False, "source": "levels"})
         data["fib_levels"] = default_fib_levels_json()
         self.main_panel.apply_all(data)
 
@@ -3255,6 +3312,19 @@ class ControlPanel(QDialog):
         table_layout = QVBoxLayout(self.table_group)
         table_layout.setContentsMargins(5, 15, 5, 5)
 
+        # Was die Fib zeigt: die Setups aus der Tabelle oder die Level-Liste wie TradingView - nie beides
+        src_row = QHBoxLayout(); src_row.setSpacing(4)
+        lbl_src = QLabel("Fib zeigt:"); lbl_src.setObjectName("rules")
+        src_row.addWidget(lbl_src)
+        self.src_btns = {}
+        for key, text, tip in (("setups", "Setups", "Die Fib zeigt die Setups aus der Tabelle – jede Linie einzeln an/aus"),
+                               ("levels", "TradingView-Liste", "Die Fib zeigt die Level-Liste wie bei TradingView "
+                                                               "(Einstellungen → Fib-Darstellung) – die Setups werden nicht gezeichnet")):
+            b = QPushButton(text); b.setObjectName("toggle"); b.setCheckable(True); b.setToolTip(tip)
+            b.clicked.connect(lambda checked, k=key: self.set_fib_source(k))
+            src_row.addWidget(b, 1); self.src_btns[key] = b
+        table_layout.addLayout(src_row)
+
         self.table = FibTable(4, 7)
         self.table.setHorizontalHeaderLabels(["Setup", "Entry", "SL", "BE", "TP1", "TP2", "TP3"])
 
@@ -3363,6 +3433,7 @@ class ControlPanel(QDialog):
             # eingeschaltet (z. B. Magnet an): Symbol in der Schriftfarbe des aktiven Knopfs, sonst Gold auf Gold
             icon.addPixmap(tool_icon(kind, t["on_text"]).pixmap(64), QIcon.Normal, QIcon.On)
             b.setIcon(icon)
+        self.refresh_rows()  # Grau der ausgeschalteten Linien in der Farbe des Designs
         # neu messen, sobald das Design angewendet ist (Schrift und Kästchen können sich ändern)
         QTimer.singleShot(0, lambda: (self.table.update_natural_widths(), self.fit_to_content()))
 
@@ -3431,11 +3502,33 @@ class ControlPanel(QDialog):
             for col, k in enumerate(LINE_KEYS, start=1):
                 val = s["entry" if k == "e" else k]
                 self.table.setItem(i, col, make_item(f"{val:.3f}", f"show_{k}"))
+        self.refresh_rows()
         self.table.blockSignals(False)
         self.table.update_natural_widths()
         QTimer.singleShot(0, self.fit_to_content)
         sp = getattr(self, "settings_panel", None)
-        if sp is not None and hasattr(sp, "sync_setup_checks"): sp.sync_setup_checks()
+        if sp is not None and hasattr(sp, "sync_setup_checks"): sp.sync_setup_checks(); sp.sync_source()
+
+    def refresh_rows(self):
+        """Häkchen der Tabelle nach den Setups stellen. Linien eines ausgeschalteten Setups sind grau (bleiben aber
+        anklickbar). Zeigt die Fib die Level-Liste, ist die ganze Tabelle grau und gesperrt."""
+        setups_on = FIB_STYLE["source"] == "setups"
+        muted = QColor(THEMES[THEME]["muted"])
+        blocked = self.table.blockSignals(True)
+        for i, s in enumerate(SETUPS):
+            for col, key in enumerate(["active"] + [f"show_{k}" for k in LINE_KEYS]):
+                it = self.table.item(i, col)
+                if not it: continue
+                it.setCheckState(Qt.Checked if s[key] else Qt.Unchecked)
+                it.setData(Qt.ForegroundRole, None if setups_on and (col == 0 or s["active"]) else muted)
+        self.table.blockSignals(blocked)
+        self.table.setEnabled(setups_on)
+        for k, b in self.src_btns.items(): b.setChecked(k == FIB_STYLE["source"])
+
+    def set_fib_source(self, src):
+        FIB_STYLE["source"] = src
+        self.update_table()  # Tabelle, Knöpfe und die Einstellungen nachziehen
+        self.ov.settings_changed()
 
     def table_item_changed(self, item):
         row = item.row()
@@ -3444,19 +3537,9 @@ class ControlPanel(QDialog):
         s = SETUPS[row]
         checked = (item.checkState() == Qt.Checked)
         if s[key] == checked: return
-        s[key] = checked
-
-        self.table.blockSignals(True)
-        if key == "active":
-            # ganze Zeile an/aus
-            for col, k in enumerate(LINE_KEYS, start=1):
-                s[f"show_{k}"] = checked
-                self.table.item(row, col).setCheckState(item.checkState())
-        elif checked and not s["active"]:
-            # eine Linie einschalten, obwohl das Setup aus ist -> Setup wieder an
-            s["active"] = True
-            self.table.item(row, 0).setCheckState(Qt.Checked)
-        self.table.blockSignals(False)
+        # Setup-Häkchen = Hauptschalter, die Linien-Häkchen bleiben, wie sie sind
+        set_setup_flag(s, "active" if key == "active" else key[len("show_"):], checked)
+        self.refresh_rows()
         if self.settings_panel: self.settings_panel.sync_setup_checks()  # Häkchen in den Einstellungen nachziehen
         self.ov.settings_changed()
 
