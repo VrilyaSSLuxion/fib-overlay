@@ -72,7 +72,7 @@ MARGIN_BOTTOM = 18
 MAGNET_DRAWINGS = True  # Magnet auch für Linien und Rechtecke, nicht nur für die Fib
 NUM_KEEP = True         # Objekt-Nummern behalten (Rechteck 3 bleibt Rechteck 3)
 AUTO_MODE = False       # Automatik (Test): Setups weiterschalten, wenn der Kurs durch den SL läuft
-APP_VERSION = "5"
+APP_VERSION = "6"
 
 DEFAULTS = None  # Werkseinstellungen, wird in main() gefüllt
 
@@ -95,6 +95,7 @@ for i in range(1, 5):
         "color_tp3": QColor(70, 220, 110), "thick_tp3": 1, "style_tp3": "Solid",
         "active": True,
         **{f"show_{k}": True for k in LINE_KEYS},
+        **{f"fill_{k}": k == "sl" for k in LINE_KEYS},  # Fläche zum nächsten Level darüber - Standard nur SL (Entry -> SL)
     })
 
 # ===== ZEICHENWERKZEUGE =====
@@ -534,6 +535,8 @@ def settings_css(t):
             f"QCheckBox[dim=\"true\"] {{ color: {t['muted']}; }}"
             f"QLabel#muted {{ color: {t['muted']}; font-weight: normal; }}"
             f"QLabel#hint {{ color: {focus}; font-weight: normal; }}"
+            f"QLabel#verHead {{ color: {t['title']}; font-weight: bold; font-size: 14px; border: 1px solid {tb};"
+            f" border-radius: 4px; padding: 4px 10px; }}"
             f"QDoubleSpinBox#readonly {{ background-color: {mix(t['bg'], '#ffffff', 0.12)}; color: {t['muted']}; }}"
             + indicator_css(t) + field_css(t))
 
@@ -597,7 +600,7 @@ for s in SETUPS: recalc_setup(s)
 
 # ===== SPEICHERN / LADEN =====
 SETUP_KEYS = ["entry", "sl", "r_tp1", "r_tp2", "r_tp3", "active"] + \
-             [f"{p}_{k}" for k in LINE_KEYS for p in ("color", "thick", "style", "show")]
+             [f"{p}_{k}" for k in LINE_KEYS for p in ("color", "thick", "style", "show", "fill")]
 
 def settings_to_dict(ov):
     setups = [{k: (s[k].name(QColor.HexArgb) if k.startswith("color_") else s[k]) for k in SETUP_KEYS}
@@ -673,7 +676,7 @@ def apply_settings(data, ov):
             if k.startswith("color_"): s[k] = QColor(d[k])
             elif k.startswith("thick_"): s[k] = int(d[k])
             elif k.startswith("style_"): s[k] = str(d[k])
-            elif k.startswith("show_") or k == "active": s[k] = bool(d[k])
+            elif k.startswith(("show_", "fill_")) or k == "active": s[k] = bool(d[k])
             else: s[k] = float(d[k])
     for s in SETUPS: recalc_setup(s)
 
@@ -1307,8 +1310,8 @@ class FibOverlay(QWidget):
             n = s["n"]
             for k, frac, label in (("e", s["entry"], f"E{n}"), ("sl", s["sl"], f"SL{n}"), ("be", s["be"], f"BE{n}"),
                                    ("tp1", s["tp1"], f"TP1_{n}"), ("tp2", s["tp2"], f"TP2_{n}"), ("tp3", s["tp3"], f"TP3_{n}")):
-                # Entry ohne Fläche davor - wie 0,5 in der TradingView-Liste; SL, BE und TP füllen bis zur Linie davor
-                if s[f"show_{k}"]: add(frac, s[f"color_{k}"], s[f"thick_{k}"], s[f"style_{k}"], label, k != "e")
+                # Fläche je Linie an/aus (Einstellungen, Spalte "Fläche") - z. B. SL: rot zwischen Entry und SL
+                if s[f"show_{k}"]: add(frac, s[f"color_{k}"], s[f"thick_{k}"], s[f"style_{k}"], label, s[f"fill_{k}"])
         return sorted(groups.values(), key=lambda g: g["frac"])
 
     def _level_text(self, lv, f):
@@ -2519,7 +2522,7 @@ class SettingsPanel(QDialog):
             cb_on.toggled.connect(lambda on, idx=i: self.set_setup_show(idx, "active", on))
             self.cb_active.append(cb_on)
             grid.addWidget(cb_on, 0, 0, 1, 6)
-            for c, head in enumerate(("Linie", "Wert", "R", "Farbe", "Dicke", "Stil")): grid.addWidget(QLabel(f"<b>{head}</b>"), 1, c)
+            for c, head in enumerate(("Linie", "Wert", "R", "Farbe", "Dicke", "Stil", "Fläche")): grid.addWidget(QLabel(f"<b>{head}</b>"), 1, c)
 
             def add_row(row, label, spin_widget, r_combo, key):
                 row += 1  # Zeile 0 = Setup an/aus, Zeile 1 = Überschriften
@@ -2543,6 +2546,10 @@ class SettingsPanel(QDialog):
                 cb_style.setCurrentIndex(max(0, cb_style.findData(s[f'style_{key}'])))
                 cb_style.currentIndexChanged.connect(lambda ix, idx=i, k=key, c=cb_style: self.update_style(idx, k, c.itemData(ix)))
                 grid.addWidget(cb_style, row, 5)
+                cb_fill = QCheckBox(); cb_fill.setChecked(s[f"fill_{key}"])
+                cb_fill.setToolTip(f"Fläche zum nächsten Level darüber füllen (in der Farbe von {label})")
+                cb_fill.toggled.connect(lambda on, idx=i, k=key: self.set_setup_fill(idx, k, on))
+                grid.addWidget(cb_fill, row, 6, Qt.AlignCenter)
 
             def value_spin(val, editable, key=None):
                 sp = QDoubleSpinBox(); sp.setRange(-10000, 10000); sp.setDecimals(3); sp.setSingleStep(0.001); sp.setValue(val)
@@ -2743,6 +2750,10 @@ class SettingsPanel(QDialog):
 
         layout.addStretch()
         scroll.setWidget(scroll_content)
+        # Version immer sichtbar oben im Fenster
+        lbl_ver = QLabel(f"Fib Overlay (SK-System)  ·  Version {APP_VERSION}"); lbl_ver.setObjectName("verHead")
+        lbl_ver.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(lbl_ver)
         main_layout.addWidget(scroll)
         self.setLayout(main_layout)
 
@@ -3001,6 +3012,10 @@ class SettingsPanel(QDialog):
                 cb = self.cb_line[k][i]
                 if cb.property("dim") != (not s["active"]):
                     cb.setProperty("dim", not s["active"]); cb.style().unpolish(cb); cb.style().polish(cb)
+
+    def set_setup_fill(self, idx, key, on):
+        SETUPS[idx][f"fill_{key}"] = on
+        self.ov.settings_changed()
 
     def sync_source(self):
         # Umschalter Setups / Level-Liste und die Hinweise dazu
