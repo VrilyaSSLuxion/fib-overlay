@@ -72,7 +72,7 @@ MARGIN_BOTTOM = 18
 MAGNET_DRAWINGS = True  # Magnet auch für Linien und Rechtecke, nicht nur für die Fib
 NUM_KEEP = True         # Objekt-Nummern behalten (Rechteck 3 bleibt Rechteck 3)
 AUTO_MODE = False       # Automatik (Test): Setups weiterschalten, wenn der Kurs durch den SL läuft
-APP_VERSION = "3"
+APP_VERSION = "4"
 
 DEFAULTS = None  # Werkseinstellungen, wird in main() gefüllt
 
@@ -2458,14 +2458,26 @@ class SettingsPanel(QDialog):
         self.spin_tp1 = []; self.spin_tp2 = []; self.spin_tp3 = []
         self.cb_stp = [[], [], []]  # R-Auswahl TP1/TP2/TP3 je Setup
         self.color_btns = {"e":[], "sl":[], "be":[], "tp1":[], "tp2":[], "tp3":[]}
+        # Häkchen wie im Dashboard: ganzes Setup und einzelne Linien an/aus
+        self.cb_active = []; self.cb_line = {k: [] for k in LINE_KEYS}
 
         for i, s in enumerate(SETUPS):
             grp = QGroupBox(f"Setup {s['n']}")
             grid = QGridLayout()
-            for c, head in enumerate(("Linie", "Wert", "R", "Farbe", "Dicke", "Stil")): grid.addWidget(QLabel(f"<b>{head}</b>"), 0, c)
+            cb_on = QCheckBox(f"Setup {s['n']} anzeigen  (an/aus – wie das Häkchen im Dashboard)")
+            cb_on.setChecked(s["active"])
+            cb_on.toggled.connect(lambda on, idx=i: self.set_setup_show(idx, "active", on))
+            self.cb_active.append(cb_on)
+            grid.addWidget(cb_on, 0, 0, 1, 6)
+            for c, head in enumerate(("Linie", "Wert", "R", "Farbe", "Dicke", "Stil")): grid.addWidget(QLabel(f"<b>{head}</b>"), 1, c)
 
             def add_row(row, label, spin_widget, r_combo, key):
-                grid.addWidget(QLabel(label), row, 0)
+                row += 1  # Zeile 0 = Setup an/aus, Zeile 1 = Überschriften
+                cb_ln = QCheckBox(label); cb_ln.setChecked(s[f"show_{key}"])
+                cb_ln.setToolTip(f"Linie {label} anzeigen")
+                cb_ln.toggled.connect(lambda on, idx=i, k=key: self.set_setup_show(idx, k, on))
+                self.cb_line[key].append(cb_ln)
+                grid.addWidget(cb_ln, row, 0)
                 grid.addWidget(spin_widget, row, 1)
                 grid.addWidget(r_combo if r_combo else QLabel("-"), row, 2)
                 btn_col = QPushButton(); btn_col.setFixedSize(24, 24)
@@ -2920,6 +2932,25 @@ class SettingsPanel(QDialog):
         failed = self.ov.register_hotkeys()
         if failed: self.ov.warn_hotkeys(failed, self)
         self.ov.settings_changed()
+
+    def set_setup_show(self, idx, key, on):
+        # Setup bzw. einzelne Linie an/aus – genau wie die Häkchen im Dashboard
+        s = SETUPS[idx]
+        if key == "active":
+            s["active"] = on
+            for k in LINE_KEYS: s[f"show_{k}"] = on
+        else:
+            s[f"show_{key}"] = on
+            if on and not s["active"]: s["active"] = True  # Linie an -> Setup wieder an
+        self.main_panel.update_table()  # zieht auch die Häkchen hier im Fenster nach
+        self.ov.settings_changed()
+
+    def sync_setup_checks(self):
+        # Häkchen an den aktuellen Stand anpassen (nach Dashboard, Automatik, Preset)
+        for i, s in enumerate(SETUPS[:len(self.cb_active)]):
+            for cb, val in [(self.cb_active[i], s["active"])] + [(self.cb_line[k][i], s[f"show_{k}"]) for k in LINE_KEYS]:
+                if cb.isChecked() != bool(val):
+                    cb.blockSignals(True); cb.setChecked(bool(val)); cb.blockSignals(False)
 
     def pick_color(self, idx, key):
         color = QColorDialog.getColor(SETUPS[idx][f"color_{key}"], self, "Farbe wählen")
@@ -3403,6 +3434,8 @@ class ControlPanel(QDialog):
         self.table.blockSignals(False)
         self.table.update_natural_widths()
         QTimer.singleShot(0, self.fit_to_content)
+        sp = getattr(self, "settings_panel", None)
+        if sp is not None and hasattr(sp, "sync_setup_checks"): sp.sync_setup_checks()
 
     def table_item_changed(self, item):
         row = item.row()
@@ -3424,6 +3457,7 @@ class ControlPanel(QDialog):
             s["active"] = True
             self.table.item(row, 0).setCheckState(Qt.Checked)
         self.table.blockSignals(False)
+        if self.settings_panel: self.settings_panel.sync_setup_checks()  # Häkchen in den Einstellungen nachziehen
         self.ov.settings_changed()
 
     def open_settings(self, fib=False, section=None):

@@ -2,6 +2,7 @@
 build/
 dist/
 dist_neu/
+build_neu/
 __pycache__/
 *.pyc
 
